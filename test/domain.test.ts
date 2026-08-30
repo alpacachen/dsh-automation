@@ -34,6 +34,27 @@ test('create trims input and stores execution and full-access audit state', asyn
   assert.deepEqual(domain.list().map((entry) => entry.id), [task.id])
 })
 
+test('update replaces requested fields and preserves paused state', async (t) => {
+  const { domain } = await setup(t)
+  const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))
+  const updated = await domain.update(task.id, {
+    name: ' Release check ',
+    prompt: ' Check the release. ',
+    schedule: { kind: 'once', fireAt: '2026-03-22T10:00:00.000Z' },
+  }, Date.parse('2026-03-20T01:00:00.000Z'))
+  assert.equal(updated.name, 'Release check')
+  assert.equal(updated.prompt, 'Check the release.')
+  assert.equal(updated.status, 'active')
+  assert.equal(updated.nextRunAt, '2026-03-22T10:00:00.000Z')
+
+  await domain.pause(task.id, Date.parse('2026-03-20T02:00:00.000Z'))
+  const paused = await domain.update(task.id, { schedule: daily }, Date.parse('2026-03-20T03:00:00.000Z'))
+  assert.equal(paused.status, 'paused')
+  assert.equal(paused.nextRunAt, null)
+  assert.equal(paused.pausedNextRunAt, '2026-03-20T09:00:00.000Z')
+  await assert.rejects(() => domain.update(task.id, {}, Date.now()), /at least one field/)
+})
+
 test('misfire latest-once creates one run and advances recurring anchor', async (t) => {
   const { domain } = await setup(t)
   const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))

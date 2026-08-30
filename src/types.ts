@@ -90,6 +90,12 @@ export interface CreateAutomationRequest {
   readonly createdBySessionId: string
 }
 
+export interface UpdateAutomationRequest {
+  readonly name?: string
+  readonly prompt?: string
+  readonly schedule?: AutomationSchedule
+}
+
 export interface AutomationTaskView extends AutomationTask {
   readonly running: boolean
 }

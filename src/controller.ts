@@ -6,6 +6,7 @@ import type {
   AutomationTaskView,
   CreateAutomationRequest,
   ResumeOptions,
+  UpdateAutomationRequest,
 } from './types.js'
 
 export class AutomationController {
@@ -25,6 +26,12 @@ export class AutomationController {
 
   async create(request: CreateAutomationRequest): Promise<AutomationTask> {
     const task = await this.domain.create(request, this.now())
+    this.scheduler.requestDrive()
+    return task
+  }
+
+  async update(id: string, request: UpdateAutomationRequest): Promise<AutomationTask> {
+    const task = await this.domain.update(id, request, this.now())
     this.scheduler.requestDrive()
     return task
   }

@@ -37,6 +37,7 @@ function setup() {
   const calls: string[] = []
   const controller = {
     create: async () => { calls.push('create'); return task },
+    update: async () => { calls.push('update'); return task },
     list: () => [{ ...task, running: false }],
     delete: async () => { calls.push('delete'); return true },
     pause: async () => { calls.push('pause'); return { ...task, status: 'paused' } },
@@ -56,6 +57,7 @@ test('registers complete Agent management tool surface and disposes it', async (
     'automation_list',
     'automation_pause',
     'automation_resume',
+    'automation_update',
   ])
   const created = await fixture.byName('automation_create').execute({
     name: 'Task',
@@ -65,12 +67,13 @@ test('registers complete Agent management tool surface and disposes it', async (
   assert.equal(created.ok, true)
   assert.match(created.message, /danger-full-access/)
   assert.equal((await fixture.byName('automation_list').execute({}, fixture.exec)).tasks.length, 1)
+  await fixture.byName('automation_update').execute({ id: 'automation-task', prompt: 'Updated work.' }, fixture.exec)
   await fixture.byName('automation_pause').execute({ id: 'automation-task' }, fixture.exec)
   await fixture.byName('automation_resume').execute({ id: 'automation-task', run_now: true }, fixture.exec)
   await fixture.byName('automation_delete').execute({ id: 'automation-task' }, fixture.exec)
-  assert.deepEqual(fixture.calls, ['create', 'pause', 'resume', 'delete'])
+  assert.deepEqual(fixture.calls, ['create', 'update', 'pause', 'resume', 'delete'])
   fixture.dispose()
-  assert.equal(fixture.disposed(), 5)
+  assert.equal(fixture.disposed(), 6)
 })
 
 test('create rejects mixed or incomplete schedule selectors and wrong agent scope', async () => {
@@ -88,6 +91,11 @@ test('create rejects mixed or incomplete schedule selectors and wrong agent scop
     start_at: '2026-03-20T09:00:00',
   }, fixture.exec)
   assert.equal(mixed.ok, false)
+  const update = fixture.byName('automation_update')
+  assert.equal((await update.execute({ id: 'automation-task' }, fixture.exec)).ok, false)
+  const incompleteUpdate = await update.execute({ id: 'automation-task', rrule: 'FREQ=DAILY' }, fixture.exec)
+  assert.equal(incompleteUpdate.ok, false)
+  assert.match(incompleteUpdate.error, /either once_at/)
   const wrongScope = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z' }, {
     ...fixture.exec,
     agent: {} as Agent,

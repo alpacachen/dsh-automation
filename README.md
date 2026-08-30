@@ -120,12 +120,13 @@ DSH must be running when work is due. After downtime, a recurring task runs only
 | Tool | What it does |
 | --- | --- |
 | `automation_create` | Create a one-time or recurring task for the current workspace. |
+| `automation_update` | Change a task's name, prompt, or schedule without recreating it. |
 | `automation_list` | List tasks, schedules, next-run times, and recent history. |
 | `automation_pause` | Stop future scheduling without deleting the task. |
 | `automation_resume` | Resume scheduling, optionally with one immediate run. |
 | `automation_delete` | Permanently remove the task and cancel future scheduling. |
 
-Task creation is intentionally Agent-only. The UI focuses on safe day-to-day operation of tasks that already exist.
+Task creation and definition edits are intentionally Agent-only. The UI focuses on safe day-to-day operation of tasks that already exist.
 
 ## 💡 Things to ask your Agent
 
@@ -133,7 +134,7 @@ Task creation is intentionally Agent-only. The UI focuses on safe day-to-day ope
 
 > “Every Monday at 9:30 AM, check our dependencies for important updates. Report only; do not edit files.”
 
-> “Show me all automations in this workspace and pause the release reminder.”
+> “Show me all automations, then move the release reminder to Friday at 4 PM.”
 
 > “Resume the weekly review and run it once right now.”
 

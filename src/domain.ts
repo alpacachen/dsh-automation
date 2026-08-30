@@ -8,6 +8,7 @@ import type {
   AutomationTaskView,
   CreateAutomationRequest,
   ResumeOptions,
+  UpdateAutomationRequest,
 } from './types.js'
 
 export class AutomationDomainError extends Error {
@@ -127,6 +128,44 @@ export class AutomationDomain {
       state.tasks[task.id] = task
     })
     return structuredClone(task)
+  }
+
+  async update(id: string, request: UpdateAutomationRequest, now: number): Promise<AutomationTask> {
+    if (this.store.snapshot().tasks[id] === undefined) {
+      throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
+    }
+    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined) {
+      throw new Error('Supply at least one field to update.')
+    }
+    const name = request.name?.trim()
+    const prompt = request.prompt?.trim()
+    if (name === '') throw new Error('Automation name must not be empty.')
+    if (prompt === '') throw new Error('Automation prompt must not be empty.')
+    const schedule = request.schedule === undefined ? undefined : validateSchedule(request.schedule, now)
+    const next = schedule === undefined ? undefined : nextOccurrence(schedule, now)
+    if (schedule !== undefined && next === undefined) {
+      throw new AutomationDomainError('schedule_exhausted', 'The recurring schedule has no future occurrence.')
+    }
+
+    return this.store.mutate((state) => {
+      const task = state.tasks[id]
+      if (task === undefined) throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
+      if (name !== undefined) task.name = name
+      if (prompt !== undefined) task.prompt = prompt
+      if (schedule !== undefined) {
+        task.schedule = schedule
+        if (task.status === 'paused') {
+          task.pausedNextRunAt = instant(next!)
+          task.nextRunAt = null
+        } else {
+          task.status = 'active'
+          task.nextRunAt = instant(next!)
+          delete task.pausedAt
+          delete task.pausedNextRunAt
+        }
+      }
+      return structuredClone(task)
+    })
   }
 
   async delete(id: string): Promise<boolean> {

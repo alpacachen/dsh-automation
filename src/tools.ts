@@ -112,6 +112,18 @@ function createSchedule(args: {
   }
 }
 
+function updateSchedule(args: {
+  once_at?: number | string
+  rrule?: string
+  time_zone?: string
+  start_at?: string
+}): AutomationSchedule | undefined {
+  if (args.once_at === undefined && args.rrule === undefined && args.time_zone === undefined && args.start_at === undefined) {
+    return undefined
+  }
+  return createSchedule(args)
+}
+
 export function registerAutomationTools(
   rootCtx: Context,
   toolCtx: Context,
@@ -164,6 +176,39 @@ export function registerAutomationTools(
       }
     },
     presentCall: (args) => ({ card: 'generic', title: 'Create automation', kind: 'other', rawInput: args.name }),
+  })))
+
+  disposers.push(toolCtx.tools.register(defineTool({
+    name: 'automation_update',
+    description: 'Update an existing automation. Omitted fields stay unchanged. To replace its schedule, supply either once_at, or all of rrule, time_zone, and start_at.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Exact automation id.' },
+      name: { type: 'string', description: 'Replacement task name.' },
+      prompt: { type: 'string', description: 'Replacement self-contained prompt for future runs.' },
+      once_at: { type: 'string', description: 'Replacement one-time canonical RFC 3339 UTC instant.' },
+      rrule: { type: 'string', description: 'Replacement RFC 5545 RRULE line without DTSTART.' },
+      time_zone: { type: 'string', description: 'Replacement IANA time zone.' },
+      start_at: { type: 'string', description: 'Replacement local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
+    },
+    output: { schema: ACTION_SCHEMA, render },
+    async execute(args, exec) {
+      try {
+        if (exec.agent !== agent) throw new Error('automation_update must run in its owning agent scope.')
+        const schedule = updateSchedule(args)
+        if (args.name === undefined && args.prompt === undefined && schedule === undefined) {
+          throw new Error('Supply at least one field to update.')
+        }
+        const task = await controller.update(args.id, {
+          ...(args.name === undefined ? {} : { name: args.name }),
+          ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
+          ...(schedule === undefined ? {} : { schedule }),
+        })
+        return { ok: true as const, id: task.id, status: task.status, message: `Updated ${task.id}; next run ${task.nextRunAt}.` }
+      } catch (error) {
+        return failure(error)
+      }
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Update automation', kind: 'other', rawInput: args.id }),
   })))
 
   disposers.push(toolCtx.tools.register(defineTool({

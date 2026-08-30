@@ -1,6 +1,8 @@
 import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { AutomationTaskView } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
 import styles from './styles.css'
@@ -9,13 +11,18 @@ import '@deepseek-ai/dsh-client-runtime/client'
 import '@deepseek-ai/dsh-client-ui-layout/client'
 import '@deepseek-ai/dsh-client-ui-sidebar/client'
 
-export const inject = ['slots', 'sessions', 'locale']
+export const inject = ['slots', 'sessions', 'workspaces', 'locale']
 
 const API = '/api/automation/v1'
 const STYLE_ATTRIBUTE = 'data-dsh-automation-style'
 let panelOpen = false
 const panelListeners = new Set<() => void>()
+const pendingDrafts = new Map<SessionId, string>()
+const draftListeners = new Set<() => void>()
+let draftRevision = 0
 
+type OverlayProps = PropsRuntime<'shell.overlay'>
+type InputDockProps = PropsRuntime<'conversation.input.dock'>
 type IconName = 'calendar' | 'chevron' | 'clock' | 'close' | 'external' | 'folder' | 'pause' | 'play' | 'refresh' | 'shield' | 'trash'
 
 const iconPaths: Record<IconName, string[]> = {
@@ -62,6 +69,38 @@ function usePanelOpen(): boolean {
     },
     () => panelOpen,
   )
+}
+
+function queueDraft(sessionId: SessionId, text: string): void {
+  pendingDrafts.set(sessionId, text)
+  draftRevision += 1
+  for (const listener of draftListeners) listener()
+}
+
+function consumeDraft(sessionId: SessionId): string | undefined {
+  const text = pendingDrafts.get(sessionId)
+  if (text === undefined) return undefined
+  pendingDrafts.delete(sessionId)
+  draftRevision += 1
+  for (const listener of draftListeners) listener()
+  return text
+}
+
+function DraftInjector({ sessionId, inputActions }: InputDockProps) {
+  const revision = React.useSyncExternalStore(
+    (listener) => {
+      draftListeners.add(listener)
+      return () => draftListeners.delete(listener)
+    },
+    () => draftRevision,
+  )
+
+  React.useEffect(() => {
+    const text = consumeDraft(sessionId)
+    if (text !== undefined) inputActions.setDraft(text)
+  }, [revision, sessionId, inputActions])
+
+  return null
 }
 
 async function request(path: string, options: RequestInit = {}): Promise<unknown> {
@@ -132,14 +171,28 @@ function statusClass(status: string): string {
     : 'is-neutral'
 }
 
-function AutomationPanel({ ctx }: { ctx: Context }) {
+function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { ctx: Context }) {
   const open = usePanelOpen()
   const { t, locale } = useLocale()
+  const currentSessionId = useSessions((state) => state.current)
+  const workspaceId = useWorkspaces((state) => {
+    if (currentSessionId !== undefined) {
+      const current = state.items.find((workspace) => workspace.sessionIds.includes(currentSessionId))
+      if (current !== undefined) return current.workspaceId
+    }
+    return state.recentWorkspaceId
+  })
   const [tasks, setTasks] = React.useState<AutomationTaskView[]>([])
   const [loading, setLoading] = React.useState(false)
   const [actingTaskId, setActingTaskId] = React.useState<string>()
   const [confirmingTaskId, setConfirmingTaskId] = React.useState<string>()
+  const [creatingExampleId, setCreatingExampleId] = React.useState<string>()
   const [error, setError] = React.useState<string>()
+  const examples: Array<{ id: string; icon: IconName; title: string; description: string; prompt: string }> = [
+    { id: 'release', icon: 'calendar', title: t('exampleReleaseTitle'), description: t('exampleReleaseDescription'), prompt: t('exampleReleasePrompt') },
+    { id: 'dependencies', icon: 'shield', title: t('exampleDependenciesTitle'), description: t('exampleDependenciesDescription'), prompt: t('exampleDependenciesPrompt') },
+    { id: 'handoff', icon: 'clock', title: t('exampleHandoffTitle'), description: t('exampleHandoffDescription'), prompt: t('exampleHandoffPrompt') },
+  ]
 
   const refresh = React.useCallback(async () => {
     try {
@@ -186,6 +239,26 @@ function AutomationPanel({ ctx }: { ctx: Context }) {
     }
   }, [refresh])
 
+  const startExample = async (exampleId: string, prompt: string): Promise<void> => {
+    if (workspaceId === undefined) {
+      setError(t('workspaceUnavailable'))
+      return
+    }
+    try {
+      setCreatingExampleId(exampleId)
+      setError(undefined)
+      const sessionId = await ctx.workspaces.connectWorkspace(workspaceId)
+      queueDraft(sessionId, prompt)
+      ctx.sessions.open(sessionId)
+      setPanelOpen(false)
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason)
+      setError(t('newConversationFailed', { error: message }))
+    } finally {
+      setCreatingExampleId(undefined)
+    }
+  }
+
   if (!open) return null
 
   return (
@@ -212,14 +285,6 @@ function AutomationPanel({ ctx }: { ctx: Context }) {
         </header>
 
         <div className="automation-panel-body automation-scroll">
-          <div className="automation-access-note">
-            <span className="automation-access-icon"><Icon name="shield" /></span>
-            <div>
-              <strong>{t('fullAccessTitle')}</strong>
-              <p>{t('fullAccessMessage')}</p>
-            </div>
-          </div>
-
           {error !== undefined && <div className="automation-error" role="alert">{error}</div>}
 
           {tasks.length === 0 && loading && (
@@ -230,10 +295,30 @@ function AutomationPanel({ ctx }: { ctx: Context }) {
           )}
 
           {tasks.length === 0 && !loading && (
-            <div className="automation-empty">
+            <div className="automation-empty is-examples">
               <span className="automation-empty-icon"><Icon name="clock" size={28} /></span>
               <h3>{t('noAutomations')}</h3>
               <p>{t('createHint')}</p>
+              <div className="automation-examples">
+                {examples.map((example) => (
+                  <button
+                    key={example.id}
+                    type="button"
+                    className="automation-example"
+                    disabled={creatingExampleId !== undefined}
+                    aria-busy={creatingExampleId === example.id}
+                    onClick={() => void startExample(example.id, example.prompt)}
+                  >
+                    <span className="automation-example-icon"><Icon name={example.icon} /></span>
+                    <span className="automation-example-copy">
+                      <strong>{example.title}</strong>
+                      <span>{creatingExampleId === example.id ? t('creatingConversation') : example.description}</span>
+                    </span>
+                    <Icon name="external" />
+                  </button>
+                ))}
+              </div>
+              <small>{t('exampleDraftHint')}</small>
             </div>
           )}
 
@@ -377,9 +462,13 @@ export function apply(ctx: Context): () => void {
       { name: 'sidebar.footer.action', id: 'automation', order: 50, label: () => translate('automations') },
       AutomationButton,
     )),
+    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
+      { name: 'conversation.input.dock', id: 'automation-example-draft', order: 100 },
+      DraftInjector,
+    )),
     ctx.slots.inject('shell.overlay', () => ctx.slots.register(
       { name: 'shell.overlay', id: 'automation-panel', order: 50, label: () => translate('automations') },
-      () => <AutomationPanel ctx={ctx} />,
+      (props: OverlayProps) => <AutomationPanel {...props} ctx={ctx} />,
     )),
   ]
   return () => {
