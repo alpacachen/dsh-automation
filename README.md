@@ -57,29 +57,21 @@ It stores task definitions, scheduling state, and the latest 20 run summaries. F
 
 ## DSH profile installation
 
-Install from GitHub:
+Install the npm package:
 
 ```bash
-dsh plugin --profile web add github:alpacachen/dsh-automation
+dsh plugin --profile web add @alpacachen/dsh-automation
 ```
+
+The package supplies its own Cordis patch. Restart DSH after installation; the Client bundle contributes an **Automations** sidebar action and management drawer.
 
 For local development, build and link the checkout instead:
 
 ```bash
 pnpm build
 cd "$DSH_HOME/profiles/web"
-pnpm add 'dsh-automation@link:/absolute/path/to/automation'
+pnpm add '@alpacachen/dsh-automation@link:/absolute/path/to/automation'
 ```
-
-Add this user-owned `cordis.patch.yml` row:
-
-```yaml
-- insert:
-    - id: automation
-      name: 'dsh-automation'
-```
-
-Restart DSH after adding the Host row. The Client bundle contributes an **Automations** sidebar action and management drawer.
 
 ## Development
 
@@ -91,6 +83,12 @@ pnpm build
 ```
 
 The suite covers persistence failures, RRULE and DST behavior, missed runs, pause/resume, run-now, overlap serialization, long timers, restart recovery, Agent session creation, tools, and the HTTP management API.
+
+## Releasing
+
+CI validates every pull request and push to `main`. To release, bump the stable SemVer in `package.json` and push to `main`; `.github/workflows/release.yml` tests, builds, publishes with npm provenance, creates `v<version>`, and opens a GitHub Release.
+
+npm requires a one-time bootstrap publish before Trusted Publishing can be configured for a new package. After `@alpacachen/dsh-automation` exists, configure its npm Trusted Publisher for GitHub repository `alpacachen/dsh-automation` and workflow `release.yml`; subsequent releases need no npm token.
 
 ## Security
 

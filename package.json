@@ -1,7 +1,6 @@
 {
-  "name": "dsh-automation",
+  "name": "@alpacachen/dsh-automation",
   "version": "0.1.0",
-  "private": true,
   "description": "Durable agent-created automations for DeepSeek Harness",
   "repository": {
     "type": "git",
@@ -21,9 +20,13 @@
       "types": "./lib/client/index.d.ts",
       "default": "./lib/client.js"
     },
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
@@ -35,7 +38,10 @@
   },
   "files": [
     "lib/**/*.js",
-    "lib/**/*.d.ts"
+    "lib/**/*.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "rm -rf lib && tsc -p tsconfig.build.json && tsc -p tsconfig.client-build.json && node scripts/build-client.mjs",
@@ -90,5 +96,15 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "automation",
+    "scheduler"
+  ]
 }
