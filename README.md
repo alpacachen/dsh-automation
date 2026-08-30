@@ -7,6 +7,7 @@ Durable, agent-created scheduled tasks for DeepSeek Harness. Every run starts a 
 - One-time UTC schedules and recurring RFC 5545 RRULE schedules with IANA time zones
 - Agent-only task creation (`automation_create`)
 - Agent and UI management: list, pause, resume, run now, and delete
+- Chinese and English UI that follows the DSH language preference
 - Fresh DSH session per run, retained in the workspace session tree
 - `danger-full-access` with no approval prompts for every unattended run
 - Process-local single-timer scheduler; no cron, launchd, systemd, or scheduler framework

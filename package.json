@@ -1,6 +1,6 @@
 {
   "name": "@alpacachen/dsh-automation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Durable agent-created automations for DeepSeek Harness",
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
     },
     "client": {
       "inject": [
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-sidebar"
@@ -58,6 +59,7 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-agent-presets": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.8",
@@ -74,6 +76,7 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-agent-presets": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-client-ui-layout": "0.1.0-rc.8",
     "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.8",
