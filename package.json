@@ -1,6 +1,6 @@
 {
   "name": "@alpacachen/dsh-automation",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Durable agent-created automations for DeepSeek Harness",
   "repository": {
     "type": "git",
@@ -42,6 +42,7 @@
     "lib/**/*.d.ts",
     "cordis.patch.yml",
     "README.md",
+    "README.zh.md",
     "LICENSE"
   ],
   "scripts": {
