@@ -41,6 +41,8 @@
     "lib/**/*.js",
     "lib/**/*.d.ts",
     "cordis.patch.yml",
+    "screenshots.json",
+    "docs/screenshots/*.png",
     "README.md",
     "README.zh.md",
     "LICENSE"

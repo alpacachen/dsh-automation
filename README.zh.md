@@ -54,6 +54,8 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 - 打开最近会话和历史运行；
 - 删除未来计划，同时保留已有会话。
 
+![自动化任务列表、运行状态与快捷操作](docs/screenshots/automation-list.png)
+
 ### 可视化周期编辑器
 
 常用周期无需手写 RRULE：
@@ -65,6 +67,8 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 | 每月 · 每隔 `2` 个月 · 15 日 | 每 2 个月的 15 日执行 |
 
 还可以设置运行次数或结束日期。特殊规则可切换到 **「高级 RRULE」** 模式。
+
+![可视化周期编辑器](docs/screenshots/schedule-editor.png)
 
 ## ⏱️ 运行方式
 

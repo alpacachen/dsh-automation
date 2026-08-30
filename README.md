@@ -54,6 +54,8 @@ Each task card lets you:
 - open the latest session or any recent run;
 - delete future scheduling while keeping existing sessions.
 
+![Automation task list, run state, and quick actions](docs/screenshots/automation-list.png)
+
 ### Visual recurrence editor
 
 Common schedules do not require writing RRULE by hand:
@@ -65,6 +67,8 @@ Common schedules do not require writing RRULE by hand:
 | Monthly · every `2` months · day 15 | Run on day 15 every two months |
 
 You can also stop after a number of runs or on a date. Use **Advanced RRULE** for uncommon rules.
+
+![Visual recurrence editor](docs/screenshots/schedule-editor.png)
 
 ## ⏱️ How runs work
 
