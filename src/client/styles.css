@@ -537,6 +537,212 @@
   white-space: nowrap;
 }
 
+.automation-editor {
+  margin-top: 15px;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  animation: automation-fade-in 120ms ease-out;
+}
+
+.automation-editor-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.automation-editor-heading > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-strong-13);
+}
+
+.automation-editor-heading small {
+  color: var(--dsw-alias-label-caption);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.automation-editor fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.automation-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.automation-field.is-full {
+  grid-column: 1 / -1;
+}
+
+.automation-field input,
+.automation-field select,
+.automation-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.automation-field input,
+.automation-field select {
+  height: 34px;
+  padding: 0 9px;
+}
+
+.automation-field textarea {
+  min-height: 82px;
+  padding: 8px 9px;
+  line-height: 18px;
+  resize: vertical;
+}
+
+.automation-field input:focus,
+.automation-field select:focus,
+.automation-field textarea:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.automation-rule-mode {
+  display: inline-flex;
+  width: fit-content;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.automation-rule-mode button {
+  height: 28px;
+  appearance: none;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font: var(--dsw-font-xxxs-strong-11);
+}
+
+.automation-rule-mode button.is-active {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-shadow-lv1);
+}
+
+.automation-rule-mode button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.automation-rule-advanced {
+  display: grid;
+  gap: 5px;
+}
+
+.automation-rule-advanced small,
+.automation-rule-builder small {
+  color: var(--dsw-alias-label-caption);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.automation-rule-builder {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.automation-rule-builder > .automation-field.is-full {
+  grid-column: 1 / -1;
+}
+
+.automation-interval-control {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.automation-interval-control b {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  font-weight: 400;
+}
+
+.automation-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.automation-weekdays label {
+  position: relative;
+  cursor: pointer;
+}
+
+.automation-weekdays input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.automation-weekdays span {
+  display: grid;
+  min-width: 32px;
+  height: 30px;
+  place-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+}
+
+.automation-weekdays input:checked + span {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.automation-weekdays input:focus-visible + span {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.automation-editor fieldset:disabled {
+  opacity: 0.65;
+}
+
+.automation-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+}
+
 .automation-task-actions {
   display: flex;
   align-items: center;
@@ -786,6 +992,11 @@
 
   .automation-panel-body {
     padding: 12px;
+  }
+
+  .automation-editor fieldset,
+  .automation-rule-builder {
+    grid-template-columns: 1fr;
   }
 
   .automation-task-card {

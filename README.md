@@ -26,7 +26,7 @@ Tell an Agent what to do and when. The plugin remembers the task, waits in the D
 | --- | --- | --- |
 | Only Agents create tasks, so a plain-language request is enough. | RFC 5545 recurrence rules follow an IANA time zone across daylight-saving changes. | Every attempt has status, time, errors, and a link to its DSH session. |
 | **🧼 Start fresh** | **🎛️ Stay in control** | **💾 Survive restarts** |
-| Each run gets a new session with no previous chat history. | Run now, pause, resume, resume and run, inspect history, or delete from the UI. | Versioned JSON state and latest-only catch-up keep schedules durable and predictable. |
+| Each run gets a new session with no previous chat history. | Edit, run now, pause, resume, inspect history, or delete from the UI. | Versioned JSON state and latest-only catch-up keep schedules durable and predictable. |
 
 ## 🚀 Get started in three moves
 
@@ -60,13 +60,14 @@ Choose **Automations** in the DSH sidebar. The management drawer shows what is a
 
 From there you can:
 
+- edit a task's name, prompt, or schedule;
 - run a task immediately;
 - pause or resume its calendar schedule;
 - resume a paused task and run it once now;
 - open the latest session or any recent run;
 - delete future scheduling without deleting existing run sessions.
 
-The UI follows the current DSH language, light/dark theme, typography, colors, and interaction patterns.
+Recurring schedules include a visual daily/weekly/monthly editor with interval and ending controls. **Advanced RRULE** remains available for uncommon RFC 5545 rules. The UI follows the current DSH language, light/dark theme, typography, colors, and interaction patterns.
 
 ## ⏱️ How a run travels
 
@@ -126,7 +127,7 @@ DSH must be running when work is due. After downtime, a recurring task runs only
 | `automation_resume` | Resume scheduling, optionally with one immediate run. |
 | `automation_delete` | Permanently remove the task and cancel future scheduling. |
 
-Task creation and definition edits are intentionally Agent-only. The UI focuses on safe day-to-day operation of tasks that already exist.
+Task creation remains Agent-only. Existing task definitions can be edited by either the Agent or the UI.
 
 ## 💡 Things to ask your Agent
 

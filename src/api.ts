@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from './controller.js'
+import { AutomationScheduleSchema, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
 
@@ -43,6 +44,20 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   return value as Record<string, unknown>
 }
 
+function parseUpdate(body: Record<string, unknown>): UpdateAutomationRequest {
+  if (Object.keys(body).some((key) => key !== 'name' && key !== 'prompt' && key !== 'schedule')) {
+    throw new Error('Update body contains an unknown field.')
+  }
+  if (body.name !== undefined && typeof body.name !== 'string') throw new Error('name must be a string.')
+  if (body.prompt !== undefined && typeof body.prompt !== 'string') throw new Error('prompt must be a string.')
+  const schedule = body.schedule === undefined ? undefined : AutomationScheduleSchema.parse(body.schedule)
+  return {
+    ...(body.name === undefined ? {} : { name: body.name as string }),
+    ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
+    ...(schedule === undefined ? {} : { schedule }),
+  }
+}
+
 export function registerAutomationApi(ctx: Context, controller: AutomationController): () => void {
   return ctx.webServer.register({
     kind: 'prefix',
@@ -70,6 +85,10 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
         }
         const id = decodeURIComponent(match[1]!)
         const action = match[2]
+        if (req.method === 'PATCH' && action === undefined) {
+          send(res, 200, { task: await controller.update(id, parseUpdate(await readJson(req))) })
+          return
+        }
         if (req.method === 'DELETE' && action === undefined) {
           const deleted = await controller.delete(id)
           send(res, deleted ? 200 : 404, { deleted })

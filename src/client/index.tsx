@@ -5,6 +5,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { AutomationTaskView } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
+import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
 import styles from './styles.css'
 
 import '@deepseek-ai/dsh-client-runtime/client'
@@ -23,13 +24,14 @@ let draftRevision = 0
 
 type OverlayProps = PropsRuntime<'shell.overlay'>
 type InputDockProps = PropsRuntime<'conversation.input.dock'>
-type IconName = 'calendar' | 'chevron' | 'clock' | 'close' | 'external' | 'folder' | 'pause' | 'play' | 'refresh' | 'shield' | 'trash'
+type IconName = 'calendar' | 'chevron' | 'clock' | 'close' | 'edit' | 'external' | 'folder' | 'pause' | 'play' | 'refresh' | 'shield' | 'trash'
 
 const iconPaths: Record<IconName, string[]> = {
   calendar: ['M3 9h18', 'M7 3v4', 'M17 3v4', 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z'],
   chevron: ['m8 10 4 4 4-4'],
   clock: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z', 'M12 6v6l4 2'],
   close: ['M18 6 6 18', 'm6 6 12 12'],
+  edit: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'],
   external: ['M15 3h6v6', 'm10 14 11-11', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
   folder: ['M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z', 'M3 7V5a2 2 0 0 1 2-2h4l2 2'],
   pause: ['M9 5v14', 'M15 5v14'],
@@ -144,7 +146,21 @@ function formatDate(value: string, locale: string): string {
 
 function scheduleLabel(task: AutomationTaskView, locale: string, t: typeof translate): string {
   if (task.schedule.kind === 'once') return `${t('once')} · ${formatDate(task.schedule.fireAt, locale)}`
-  return `${task.schedule.rrule} · ${task.schedule.timeZone}`
+  const rule = parseCommonRRule(task.schedule.rrule)
+  if (rule === undefined) return `${task.schedule.rrule} · ${task.schedule.timeZone}`
+  const interval = Number(rule.interval)
+  const repeat = rule.frequency === 'DAILY'
+    ? t(interval === 1 ? 'everyDay' : 'everyDays', { count: interval })
+    : rule.frequency === 'WEEKLY'
+      ? t(interval === 1 ? 'everyWeek' : 'everyWeeks', { count: interval })
+      : t(interval === 1 ? 'everyMonth' : 'everyMonths', { count: interval })
+  let detail = ''
+  if (rule.frequency === 'WEEKLY' && rule.weekdays.length > 0) {
+    const chinese = locale.toLowerCase().startsWith('zh')
+    detail = rule.weekdays.map((day) => `${chinese ? '周' : ''}${t(WEEKDAY_KEYS[day])}`).join(chinese ? '、' : ', ')
+  }
+  if (rule.frequency === 'MONTHLY' && rule.monthDay) detail = t('dayOfMonth', { day: rule.monthDay })
+  return [repeat, detail, task.schedule.timeZone].filter(Boolean).join(' · ')
 }
 
 function statusLabel(status: string, t: typeof translate): string {
@@ -171,6 +187,236 @@ function statusClass(status: string): string {
     : 'is-neutral'
 }
 
+type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule'>>
+
+const WEEKDAY_KEYS = {
+  MO: 'weekdayMonday',
+  TU: 'weekdayTuesday',
+  WE: 'weekdayWednesday',
+  TH: 'weekdayThursday',
+  FR: 'weekdayFriday',
+  SA: 'weekdaySaturday',
+  SU: 'weekdaySunday',
+} as const satisfies Record<Weekday, string>
+
+const INTERVAL_UNIT_KEYS = {
+  DAILY: 'intervalDays',
+  WEEKLY: 'intervalWeeks',
+  MONTHLY: 'intervalMonths',
+} as const satisfies Record<CommonRRule['frequency'], string>
+
+function toLocalDateTime(value: string): string {
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 19)
+}
+
+function EditTaskForm({
+  task,
+  saving,
+  t,
+  onSave,
+  onCancel,
+}: {
+  task: AutomationTaskView
+  saving: boolean
+  t: typeof translate
+  onSave: (body: TaskUpdateBody) => void
+  onCancel: () => void
+}) {
+  const fallbackInstant = task.schedule.kind === 'once'
+    ? task.schedule.fireAt
+    : task.nextRunAt ?? new Date(Date.now() + 60 * 60_000).toISOString()
+  const [name, setName] = React.useState(task.name)
+  const [prompt, setPrompt] = React.useState(task.prompt)
+  const [kind, setKind] = React.useState<AutomationTaskView['schedule']['kind']>(task.schedule.kind)
+  const [onceAt, setOnceAt] = React.useState(toLocalDateTime(fallbackInstant))
+  const defaultMonthDay = String(Number((task.schedule.kind === 'recurring' ? task.schedule.startAt : toLocalDateTime(fallbackInstant)).slice(8, 10)))
+  const initialRrule = task.schedule.kind === 'recurring' ? task.schedule.rrule : 'FREQ=DAILY'
+  const initialCommonRule = parseCommonRRule(initialRrule, defaultMonthDay)
+  const initialComparableRrule = initialCommonRule === undefined ? initialRrule : buildCommonRRule(initialCommonRule)
+  const [rrule, setRrule] = React.useState(initialRrule)
+  const [advancedRule, setAdvancedRule] = React.useState(initialCommonRule === undefined)
+  const [commonRule, setCommonRule] = React.useState<CommonRRule>(initialCommonRule ?? defaultCommonRRule(defaultMonthDay))
+  const [timeZone, setTimeZone] = React.useState(task.schedule.kind === 'recurring'
+    ? task.schedule.timeZone
+    : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  const [startAt, setStartAt] = React.useState(task.schedule.kind === 'recurring'
+    ? task.schedule.startAt
+    : toLocalDateTime(fallbackInstant))
+  const normalizedStartAt = startAt.length === 16 ? `${startAt}:00` : startAt
+  const effectiveRrule = advancedRule ? rrule : buildCommonRRule(commonRule)
+  const parsedRawRule = parseCommonRRule(rrule, defaultMonthDay)
+  const scheduleChanged = task.schedule.kind !== kind || (kind === 'once'
+    ? task.schedule.kind !== 'once' || onceAt !== toLocalDateTime(task.schedule.fireAt)
+    : task.schedule.kind !== 'recurring' || effectiveRrule !== initialComparableRrule || timeZone !== task.schedule.timeZone || normalizedStartAt !== task.schedule.startAt)
+  const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged
+
+  return (
+    <form
+      className="automation-editor"
+      onSubmit={(event) => {
+        event.preventDefault()
+        const schedule: AutomationTaskView['schedule'] | undefined = !scheduleChanged
+          ? undefined
+          : kind === 'once'
+            ? { kind: 'once', fireAt: new Date(onceAt).toISOString() }
+            : { kind: 'recurring', rrule: effectiveRrule, timeZone, startAt: normalizedStartAt }
+        onSave({
+          ...(name.trim() === task.name ? {} : { name }),
+          ...(prompt.trim() === task.prompt ? {} : { prompt }),
+          ...(schedule === undefined ? {} : { schedule }),
+        })
+      }}
+    >
+      <div className="automation-editor-heading">
+        <span><Icon name="edit" />{t('editTask')}</span>
+        <small>{t('editFutureRunsHint')}</small>
+      </div>
+      <fieldset disabled={saving}>
+        <label className="automation-field">
+          <span>{t('nameLabel')}</span>
+          <input required value={name} onChange={(event) => setName(event.target.value)} />
+        </label>
+        <label className="automation-field is-full">
+          <span>{t('promptLabel')}</span>
+          <textarea required rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        </label>
+        <label className="automation-field">
+          <span>{t('scheduleType')}</span>
+          <select value={kind} onChange={(event) => setKind(event.target.value as AutomationTaskView['schedule']['kind'])}>
+            <option value="once">{t('oneTimeSchedule')}</option>
+            <option value="recurring">{t('recurringSchedule')}</option>
+          </select>
+        </label>
+        {kind === 'once' ? (
+          <label className="automation-field">
+            <span>{t('runAt')}</span>
+            <input required type="datetime-local" step="1" value={onceAt} onChange={(event) => setOnceAt(event.target.value)} />
+          </label>
+        ) : (
+          <>
+            <div className="automation-field is-full">
+              <span>{t('recurrenceRule')}</span>
+              <div className="automation-rule-mode" role="group" aria-label={t('ruleMode')}>
+                <button
+                  type="button"
+                  className={!advancedRule ? 'is-active' : undefined}
+                  disabled={advancedRule && parsedRawRule === undefined}
+                  title={advancedRule && parsedRawRule === undefined ? t('unsupportedRuleHint') : undefined}
+                  onClick={() => {
+                    if (parsedRawRule === undefined) return
+                    setCommonRule(parsedRawRule)
+                    setAdvancedRule(false)
+                  }}
+                >
+                  {t('visualMode')}
+                </button>
+                <button
+                  type="button"
+                  className={advancedRule ? 'is-active' : undefined}
+                  onClick={() => {
+                    if (!advancedRule) setRrule(buildCommonRRule(commonRule))
+                    setAdvancedRule(true)
+                  }}
+                >
+                  {t('advancedMode')}
+                </button>
+              </div>
+              {advancedRule ? (
+                <div className="automation-rule-advanced">
+                  <input required value={rrule} placeholder="FREQ=WEEKLY;BYDAY=MO" onChange={(event) => setRrule(event.target.value)} />
+                  <small>{parsedRawRule === undefined ? t('unsupportedRuleHint') : t('advancedRuleHint')}</small>
+                </div>
+              ) : (
+                <div className="automation-rule-builder">
+                  <label className="automation-field">
+                    <span>{t('frequency')}</span>
+                    <select value={commonRule.frequency} onChange={(event) => setCommonRule({ ...commonRule, frequency: event.target.value as CommonRRule['frequency'] })}>
+                      <option value="DAILY">{t('frequencyDaily')}</option>
+                      <option value="WEEKLY">{t('frequencyWeekly')}</option>
+                      <option value="MONTHLY">{t('frequencyMonthly')}</option>
+                    </select>
+                  </label>
+                  <label className="automation-field">
+                    <span>{t('repeatEvery')}</span>
+                    <span className="automation-interval-control">
+                      <input required type="number" min="1" step="1" value={commonRule.interval} onChange={(event) => setCommonRule({ ...commonRule, interval: event.target.value })} />
+                      <b>{t(INTERVAL_UNIT_KEYS[commonRule.frequency])}</b>
+                    </span>
+                  </label>
+                  {commonRule.frequency === 'WEEKLY' && (
+                    <div className="automation-field is-full">
+                      <span>{t('repeatOn')}</span>
+                      <div className="automation-weekdays">
+                        {WEEKDAYS.map((day) => (
+                          <label key={day}>
+                            <input
+                              type="checkbox"
+                              checked={commonRule.weekdays.includes(day)}
+                              onChange={(event) => setCommonRule({
+                                ...commonRule,
+                                weekdays: event.target.checked
+                                  ? [...commonRule.weekdays, day]
+                                  : commonRule.weekdays.filter((value) => value !== day),
+                              })}
+                            />
+                            <span>{t(WEEKDAY_KEYS[day])}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {commonRule.weekdays.length === 0 && <small>{t('useStartDayHint')}</small>}
+                    </div>
+                  )}
+                  {commonRule.frequency === 'MONTHLY' && (
+                    <label className="automation-field">
+                      <span>{t('monthlyOnDay')}</span>
+                      <input required type="number" min="1" max="31" step="1" value={commonRule.monthDay} onChange={(event) => setCommonRule({ ...commonRule, monthDay: event.target.value })} />
+                    </label>
+                  )}
+                  <label className="automation-field">
+                    <span>{t('ends')}</span>
+                    <select value={commonRule.end} onChange={(event) => setCommonRule({ ...commonRule, end: event.target.value as CommonRRule['end'] })}>
+                      <option value="never">{t('endsNever')}</option>
+                      <option value="count">{t('endsAfter')}</option>
+                      <option value="until">{t('endsOnDate')}</option>
+                    </select>
+                  </label>
+                  {commonRule.end === 'count' && (
+                    <label className="automation-field">
+                      <span>{t('occurrences')}</span>
+                      <input required type="number" min="1" step="1" value={commonRule.count} onChange={(event) => setCommonRule({ ...commonRule, count: event.target.value })} />
+                    </label>
+                  )}
+                  {commonRule.end === 'until' && (
+                    <label className="automation-field">
+                      <span>{t('endDate')}</span>
+                      <input required type="date" value={commonRule.until} onChange={(event) => setCommonRule({ ...commonRule, until: event.target.value })} />
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+            <label className="automation-field">
+              <span>{t('timeZone')}</span>
+              <input required value={timeZone} placeholder="Asia/Shanghai" onChange={(event) => setTimeZone(event.target.value)} />
+            </label>
+            <label className="automation-field">
+              <span>{t('startsAt')}</span>
+              <input required type="datetime-local" step="1" value={startAt} onChange={(event) => setStartAt(event.target.value)} />
+            </label>
+          </>
+        )}
+      </fieldset>
+      <div className="automation-editor-actions">
+        <button type="button" className="automation-button" disabled={saving} onClick={onCancel}>{t('cancel')}</button>
+        <button type="submit" className="automation-button is-primary" disabled={saving || !changed}>
+          {saving ? t('saving') : t('saveChanges')}
+        </button>
+      </div>
+    </form>
+  )
+}
+
 function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { ctx: Context }) {
   const open = usePanelOpen()
   const { t, locale } = useLocale()
@@ -186,6 +432,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
   const [loading, setLoading] = React.useState(false)
   const [actingTaskId, setActingTaskId] = React.useState<string>()
   const [confirmingTaskId, setConfirmingTaskId] = React.useState<string>()
+  const [editingTaskId, setEditingTaskId] = React.useState<string>()
   const [creatingExampleId, setCreatingExampleId] = React.useState<string>()
   const [error, setError] = React.useState<string>()
   const examples: Array<{ id: string; icon: IconName; title: string; description: string; prompt: string }> = [
@@ -217,14 +464,17 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
   React.useEffect(() => {
     if (!open) {
       setConfirmingTaskId(undefined)
+      setEditingTaskId(undefined)
       return
     }
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPanelOpen(false)
+      if (event.key !== 'Escape') return
+      if (editingTaskId !== undefined) setEditingTaskId(undefined)
+      else setPanelOpen(false)
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [open])
+  }, [open, editingTaskId])
 
   const act = React.useCallback(async (taskId: string, path: string, options: RequestInit) => {
     try {
@@ -238,6 +488,20 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
       setActingTaskId(undefined)
     }
   }, [refresh])
+
+  const updateTask = async (taskId: string, body: TaskUpdateBody): Promise<void> => {
+    try {
+      setActingTaskId(taskId)
+      setError(undefined)
+      await request(`/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(body) })
+      await refresh()
+      setEditingTaskId(undefined)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setActingTaskId(undefined)
+    }
+  }
 
   const startExample = async (exampleId: string, prompt: string): Promise<void> => {
     if (workspaceId === undefined) {
@@ -327,6 +591,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
               const busy = task.running
               const pending = actingTaskId === task.id
               const confirming = confirmingTaskId === task.id
+              const editing = editingTaskId === task.id
               const disabled = busy || pending
               const displayStatus = busy ? 'running' : task.status
               const latestSession = [...task.runs].reverse().find((run) => run.sessionId !== undefined)?.sessionId
@@ -359,6 +624,15 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                     </div>
                   </div>
 
+                  {editing ? (
+                    <EditTaskForm
+                      task={task}
+                      saving={pending}
+                      t={t}
+                      onSave={(body) => void updateTask(task.id, body)}
+                      onCancel={() => setEditingTaskId(undefined)}
+                    />
+                  ) : (
                   <div className="automation-task-actions">
                     <button type="button" className="automation-button is-primary" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST' })}>
                       <Icon name="play" />{t('runNow')}
@@ -383,6 +657,17 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                         <Icon name="external" />{t('openLatestSession')}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      className="automation-button"
+                      disabled={pending}
+                      onClick={() => {
+                        setConfirmingTaskId(undefined)
+                        setEditingTaskId(task.id)
+                      }}
+                    >
+                      <Icon name="edit" />{t('edit')}
+                    </button>
                     {confirming ? (
                       <div className="automation-delete-confirm" role="group" aria-label={t('deleteConfirm', { name: task.name })}>
                         <span>{t('deleteConfirm', { name: task.name })}</span>
@@ -414,6 +699,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                       </button>
                     )}
                   </div>
+                  )}
 
                   {task.runs.length > 0 && (
                     <details className="automation-history">
