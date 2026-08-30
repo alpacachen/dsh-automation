@@ -121,7 +121,10 @@ jobs:
             echo "published=true" >> "$GITHUB_OUTPUT"
             echo "$package@$version is already published with matching integrity; npm publish will be skipped."
           else
-            latest="$(npm view "$package" version --json 2>/dev/null | node -e "let data=''; process.stdin.on('data', c => data += c); process.stdin.on('end', () => { const value = JSON.parse(data || 'null'); if (typeof value === 'string') process.stdout.write(value) })")"
+            latest=""
+            if latest_json="$(npm view "$package" version --json 2>/dev/null)"; then
+              latest="$(node -e "const value=JSON.parse(process.argv[1]); if (typeof value === 'string') process.stdout.write(value)" "$latest_json")"
+            fi
             if [[ -n "$latest" ]] && ! node -e "const [next, current] = process.argv.slice(1).map(v => v.split('.').map(Number)); for (let i = 0; i < 3; i++) { if (next[i] > current[i]) process.exit(0); if (next[i] < current[i]) process.exit(1); } process.exit(1)" "$version" "$latest"; then
               echo "Refusing to publish $version because npm latest is $latest; the new version must be higher." >&2
               exit 1
