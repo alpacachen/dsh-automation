@@ -1,5 +1,5 @@
 import { build } from 'esbuild'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
 const result = await build({
   entryPoints: ['src/client/index.tsx'],
@@ -10,6 +10,15 @@ const result = await build({
   target: ['es2022'],
   jsx: 'automatic',
   external: ['react', 'react/*', '@deepseek-ai/*'],
+  plugins: [{
+    name: 'inline-css',
+    setup(build) {
+      build.onLoad({ filter: /\.css$/ }, async ({ path }) => ({
+        contents: await readFile(path, 'utf8'),
+        loader: 'text',
+      }))
+    },
+  }],
   sourcemap: false,
   legalComments: 'none',
 })
