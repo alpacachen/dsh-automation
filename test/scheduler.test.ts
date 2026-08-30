@@ -37,14 +37,6 @@ class FakeClock implements Clock {
   }
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 5_000; attempt += 1) {
-    if (predicate()) return
-    await flushAsync()
-  }
-  throw new Error('Condition did not settle.')
-}
-
 class RecordingRunner implements AutomationRunner {
   readonly calls: Array<{ task: AutomationTask; run: AutomationRun }> = []
   async run(task: AutomationTask, run: AutomationRun) {
@@ -101,22 +93,26 @@ test('global runner is serial and drains queued work in order', async (t) => {
   await domain.runNow(first.id, now)
   await domain.runNow(second.id, now + 1)
   let releaseFirst!: () => void
+  let markFirstStarted!: () => void
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+  const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve })
   const calls: string[] = []
   const runner: AutomationRunner = {
     async run(task, run) {
       calls.push(task.name)
-      if (task.id === first.id) await firstGate
+      if (task.id === first.id) {
+        markFirstStarted()
+        await firstGate
+      }
       return { status: 'succeeded', sessionId: `session-${run.id}` }
     },
   }
   const clock = new FakeClock(now)
   const scheduler = new AutomationScheduler(domain, runner, clock)
   scheduler.start()
-  await waitFor(() => calls.length === 1)
+  await firstStarted
   assert.deepEqual(calls, ['First'])
   releaseFirst()
-  await waitFor(() => calls.length === 2)
   await scheduler.whenSettled()
   assert.deepEqual(calls, ['First', 'Second'])
   await scheduler.stop()
