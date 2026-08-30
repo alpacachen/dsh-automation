@@ -138,6 +138,7 @@ function AutomationPanel({ ctx }: { ctx: Context }) {
   const [tasks, setTasks] = React.useState<AutomationTaskView[]>([])
   const [loading, setLoading] = React.useState(false)
   const [actingTaskId, setActingTaskId] = React.useState<string>()
+  const [confirmingTaskId, setConfirmingTaskId] = React.useState<string>()
   const [error, setError] = React.useState<string>()
 
   const refresh = React.useCallback(async () => {
@@ -161,7 +162,10 @@ function AutomationPanel({ ctx }: { ctx: Context }) {
   }, [open, refresh])
 
   React.useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setConfirmingTaskId(undefined)
+      return
+    }
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setPanelOpen(false)
     }
@@ -237,6 +241,7 @@ function AutomationPanel({ ctx }: { ctx: Context }) {
             {tasks.map((task) => {
               const busy = task.running
               const pending = actingTaskId === task.id
+              const confirming = confirmingTaskId === task.id
               const disabled = busy || pending
               const displayStatus = busy ? 'running' : task.status
               const latestSession = [...task.runs].reverse().find((run) => run.sessionId !== undefined)?.sessionId
@@ -293,20 +298,36 @@ function AutomationPanel({ ctx }: { ctx: Context }) {
                         <Icon name="external" />{t('openLatestSession')}
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className="automation-icon-button is-danger automation-delete"
-                      disabled={pending}
-                      aria-label={t('delete')}
-                      title={t('delete')}
-                      onClick={() => {
-                        if (window.confirm(t('deleteConfirm', { name: task.name }))) {
-                          void act(task.id, `/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' })
-                        }
-                      }}
-                    >
-                      <Icon name="trash" />
-                    </button>
+                    {confirming ? (
+                      <div className="automation-delete-confirm" role="group" aria-label={t('deleteConfirm', { name: task.name })}>
+                        <span>{t('deleteConfirm', { name: task.name })}</span>
+                        <button type="button" className="automation-button" disabled={pending} onClick={() => setConfirmingTaskId(undefined)}>
+                          {t('cancel')}
+                        </button>
+                        <button
+                          type="button"
+                          className="automation-button is-danger"
+                          disabled={pending}
+                          onClick={() => {
+                            setConfirmingTaskId(undefined)
+                            void act(task.id, `/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' })
+                          }}
+                        >
+                          <Icon name="trash" />{t('confirmDelete')}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="automation-icon-button is-danger automation-delete"
+                        disabled={pending}
+                        aria-label={t('delete')}
+                        title={t('delete')}
+                        onClick={() => setConfirmingTaskId(task.id)}
+                      >
+                        <Icon name="trash" />
+                      </button>
+                    )}
                   </div>
 
                   {task.runs.length > 0 && (

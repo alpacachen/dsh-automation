@@ -526,6 +526,17 @@
   color: var(--dsw-alias-label-primary-foreground);
 }
 
+.automation-button.is-danger {
+  border-color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-static-neutral-00);
+}
+
+.automation-button.is-danger:hover:not(:disabled) {
+  background: var(--dsw-alias-state-error-secondary);
+  color: var(--dsw-static-neutral-00);
+}
+
 .automation-button.is-compact {
   min-height: 26px;
   padding: 3px 8px;
@@ -534,6 +545,27 @@
 
 .automation-delete {
   margin-left: auto;
+}
+
+.automation-delete-confirm {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  animation: automation-fade-in 120ms ease-out;
+}
+
+.automation-delete-confirm > span {
+  min-width: 0;
+  flex: 1 1 240px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxs-12);
+  overflow-wrap: anywhere;
 }
 
 .automation-history {
