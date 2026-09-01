@@ -51,3 +51,25 @@ test('controller does not wake scheduler for idempotent delete miss', async () =
   assert.equal(await controller.delete('missing'), false)
   assert.equal(drives, 0)
 })
+
+test('controller stops queued and running work through their owning layer', async () => {
+  const calls: string[] = []
+  let status: 'queued' | 'running' = 'queued'
+  const domain = {
+    get: () => ({ ...task, runs: [{ ...run, status }] }),
+    cancelQueuedRun: async (id: string, runId: string, now: number) => {
+      calls.push(`cancelQueued:${id}:${runId}:${now}`)
+      return { ...run, status: 'canceled' }
+    },
+  } as unknown as AutomationDomain
+  const scheduler = {
+    requestDrive: () => calls.push('drive'),
+    cancelRun: (id: string, runId: string) => { calls.push(`cancelRunning:${id}:${runId}`); return true },
+  } as unknown as AutomationScheduler
+  const controller = new AutomationController(domain, scheduler, () => 123)
+
+  assert.deepEqual(await controller.stop('task'), { runId: 'run', status: 'canceled' })
+  status = 'running'
+  assert.deepEqual(await controller.stop('task'), { runId: 'run', status: 'canceling' })
+  assert.deepEqual(calls, ['cancelQueued:task:run:123', 'drive', 'cancelRunning:task:run'])
+})

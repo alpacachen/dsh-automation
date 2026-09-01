@@ -4,6 +4,9 @@ import { AutomationDomain, type RunOutcome } from './domain.js'
 export const MAX_TIMER_DELAY_MS = 2_147_483_647
 export const RETRY_BASE_DELAY_MS = 1_000
 export const RETRY_MAX_DELAY_MS = 60_000
+export const DEFAULT_MAX_RUN_DURATION_MS = 60 * 60_000
+
+export type AutomationRunCancelReason = 'manual' | 'timeout' | 'shutdown'
 
 export interface Clock {
   now(): number
@@ -18,6 +21,7 @@ export interface AutomationRunnerResult {
 
 export interface AutomationRunner {
   run(task: AutomationTask, run: AutomationRun): Promise<AutomationRunnerResult>
+  cancel?(runId: string, reason: AutomationRunCancelReason): boolean
 }
 
 export const systemClock: Clock = {
@@ -36,12 +40,19 @@ export class AutomationScheduler {
   private driving: Promise<void> | undefined
   private healthState: AutomationSchedulerHealth = { status: 'healthy', consecutiveFailures: 0 }
   private pendingFinish: { taskId: string; runId: string; outcome: RunOutcome } | undefined
+  private activeRun: {
+    taskId: string
+    runId: string
+    cancelReason: AutomationRunCancelReason | undefined
+    cancelTimeout: (() => void) | undefined
+  } | undefined
 
   constructor(
     readonly domain: AutomationDomain,
     readonly runner: AutomationRunner,
     readonly clock: Clock = systemClock,
     private readonly onError: (error: unknown) => void = (error) => console.error(error),
+    readonly maxRunDurationMs = DEFAULT_MAX_RUN_DURATION_MS,
   ) {}
 
   start(): void {
@@ -50,6 +61,12 @@ export class AutomationScheduler {
 
   health(): AutomationSchedulerHealth {
     return structuredClone(this.healthState)
+  }
+
+  cancelRun(taskId: string, runId: string): boolean {
+    const active = this.activeRun
+    if (active === undefined || active.taskId !== taskId || active.runId !== runId) return false
+    return this.cancelActiveRun('manual')
   }
 
   requestDrive(): void {
@@ -80,6 +97,7 @@ export class AutomationScheduler {
     this.stopped = true
     this.requested = false
     this.clearTimer()
+    this.cancelActiveRun('shutdown')
     const { retryAt: _retryAt, ...health } = this.healthState
     this.healthState = { ...health, status: 'stopped' }
     await this.driving
@@ -113,6 +131,17 @@ export class AutomationScheduler {
       this.onError(error)
     } catch {}
     this.arm(now + delay)
+  }
+
+  private cancelActiveRun(reason: AutomationRunCancelReason): boolean {
+    const active = this.activeRun
+    if (active === undefined) return false
+    if (active.cancelReason !== undefined) return true
+    if (this.runner.cancel?.(active.runId, reason) !== true) return false
+    active.cancelReason = reason
+    active.cancelTimeout?.()
+    active.cancelTimeout = undefined
+    return true
   }
 
   private clearTimer(): void {
@@ -151,6 +180,17 @@ export class AutomationScheduler {
       await this.domain.claimDue(now)
       const claimed = await this.domain.takeNextQueued(this.clock.now())
       if (claimed !== undefined) {
+        const active: NonNullable<typeof this.activeRun> = {
+          taskId: claimed.task.id,
+          runId: claimed.run.id,
+          cancelReason: undefined,
+          cancelTimeout: undefined,
+        }
+        this.activeRun = active
+        active.cancelTimeout = this.clock.setTimeout(() => {
+          active.cancelTimeout = undefined
+          if (this.activeRun === active) this.cancelActiveRun('timeout')
+        }, Math.min(this.maxRunDurationMs, MAX_TIMER_DELAY_MS))
         let outcome: RunOutcome
         try {
           const result = await this.runner.run(claimed.task, claimed.run)
@@ -164,7 +204,19 @@ export class AutomationScheduler {
             status: 'failed',
             error: error instanceof Error ? error.message : String(error),
           }
+        } finally {
+          active.cancelTimeout?.()
+          active.cancelTimeout = undefined
         }
+        const session = outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }
+        if (active.cancelReason === 'timeout') {
+          outcome = { status: 'timed_out', error: `Automation exceeded its ${this.maxRunDurationMs}ms run limit.`, ...session }
+        } else if (active.cancelReason === 'manual') {
+          outcome = { status: 'canceled', error: 'Automation run was stopped by the user.', ...session }
+        } else if (active.cancelReason === 'shutdown') {
+          outcome = { status: 'interrupted', error: 'DSH stopped while this automation run was active.', ...session }
+        }
+        if (this.activeRun === active) this.activeRun = undefined
         this.pendingFinish = { taskId: claimed.task.id, runId: claimed.run.id, outcome }
         await this.finishPendingRun(this.clock.now())
         this.requested = true

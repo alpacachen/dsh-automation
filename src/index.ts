@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { AutomationStore } from './store.js'
 import { AutomationDomain } from './domain.js'
-import { AutomationScheduler } from './scheduler.js'
+import { AutomationScheduler, DEFAULT_MAX_RUN_DURATION_MS, MAX_TIMER_DELAY_MS } from './scheduler.js'
 import { DshAutomationRunner } from './runner.js'
 import { AutomationController } from './controller.js'
 import { registerAutomationTools } from './tools.js'
@@ -38,12 +38,17 @@ export const inject = [
 export interface Config {
   readonly root?: string
   readonly maxRunHistory?: number
+  readonly maxRunDurationMs?: number
   readonly executionPermissionPreset?: 'danger-full-access'
 }
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const root = resolve(config.root ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'automation'))
   const permissionPreset = config.executionPermissionPreset ?? 'danger-full-access'
+  const maxRunDurationMs = config.maxRunDurationMs ?? DEFAULT_MAX_RUN_DURATION_MS
+  if (!Number.isSafeInteger(maxRunDurationMs) || maxRunDurationMs <= 0 || maxRunDurationMs > MAX_TIMER_DELAY_MS) {
+    throw new Error(`maxRunDurationMs must be an integer between 1 and ${MAX_TIMER_DELAY_MS}.`)
+  }
   ctx.permissionPresets.resolve(permissionPreset)
 
   const store = new AutomationStore(join(root, 'state.json'))
@@ -52,7 +57,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const runner = new DshAutomationRunner(ctx, permissionPreset)
   const scheduler = new AutomationScheduler(domain, runner, undefined, (error) => {
     ctx.logger.error(`automation scheduler failed and will retry: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
-  })
+  }, maxRunDurationMs)
   const controller = new AutomationController(domain, scheduler)
   const toolCleanups = new Map<Agent, () => void>()
 

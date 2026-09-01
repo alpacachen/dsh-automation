@@ -172,6 +172,8 @@ function statusLabel(status: string, t: typeof translate): string {
   if (status === 'succeeded') return t('statusSucceeded')
   if (status === 'failed') return t('statusFailed')
   if (status === 'interrupted') return t('statusInterrupted')
+  if (status === 'timed_out') return t('statusTimedOut')
+  if (status === 'canceled') return t('statusCanceled')
   return status
 }
 
@@ -182,7 +184,7 @@ function triggerLabel(trigger: string, t: typeof translate): string {
 }
 
 function statusClass(status: string): string {
-  return ['active', 'paused', 'completed', 'queued', 'running', 'succeeded', 'failed', 'interrupted'].includes(status)
+  return ['active', 'paused', 'completed', 'queued', 'running', 'succeeded', 'failed', 'interrupted', 'timed_out', 'canceled'].includes(status)
     ? `is-${status}`
     : 'is-neutral'
 }
@@ -645,6 +647,11 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                     <button type="button" className="automation-button is-primary" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST' })}>
                       <Icon name="play" />{t('runNow')}
                     </button>
+                    {busy && (
+                      <button type="button" className="automation-button is-danger" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/stop`, { method: 'POST' })}>
+                        <Icon name="close" />{t('stopRun')}
+                      </button>
+                    )}
                     {task.status === 'active' && (
                       <button type="button" className="automation-button" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/pause`, { method: 'POST' })}>
                         <Icon name="pause" />{t('pause')}

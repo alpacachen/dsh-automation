@@ -23,6 +23,7 @@ test('HTTP API lists and manages automations with CSRF header enforcement', asyn
     schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
     update: async (id: string, request: { name?: string }) => { calls.push(`update:${id}:${request.name}`); return { id, name: request.name } },
     runNow: async (id: string) => { calls.push(`run:${id}`); return { id: 'run-1' } },
+    stop: async (id: string) => { calls.push(`stop:${id}`); return { runId: 'run-1', status: 'canceling' } },
     pause: async (id: string) => { calls.push(`pause:${id}`); return { id, status: 'paused' } },
     resume: async (id: string, options: { runNow: boolean }) => { calls.push(`resume:${id}:${options.runNow}`); return { id, status: 'active' } },
     delete: async (id: string) => { calls.push(`delete:${id}`); return id === 'task-1' },
@@ -53,10 +54,13 @@ test('HTTP API lists and manages automations with CSRF header enforcement', asyn
   const headers = { 'x-dsh-automation': '1', 'content-type': 'application/json' }
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1`, { method: 'PATCH', headers, body: '{"name":"Updated"}' })).status, 200)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/run`, { method: 'POST', headers })).status, 202)
+  const stopped = await fetch(`${base}/api/automation/v1/tasks/task-1/stop`, { method: 'POST', headers })
+  assert.equal(stopped.status, 202)
+  assert.deepEqual(await stopped.json(), { runId: 'run-1', status: 'canceling' })
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/pause`, { method: 'POST', headers })).status, 200)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/resume`, { method: 'POST', headers, body: '{"runNow":true}' })).status, 200)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1`, { method: 'DELETE', headers })).status, 200)
-  assert.deepEqual(calls, ['update:task-1:Updated', 'run:task-1', 'pause:task-1', 'resume:task-1:true', 'delete:task-1'])
+  assert.deepEqual(calls, ['update:task-1:Updated', 'run:task-1', 'stop:task-1', 'pause:task-1', 'resume:task-1:true', 'delete:task-1'])
 })
 
 test('HTTP API rejects cross-origin, invalid bodies, methods and unknown routes', async (t) => {

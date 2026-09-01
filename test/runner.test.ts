@@ -126,3 +126,66 @@ test('workspace attachment failure still disposes the created Agent', async () =
   await assert.rejects(() => new DshAutomationRunner(fake.ctx, 'danger-full-access').run(task, run), /attach failed/)
   assert.equal(fake.disposed(), 1)
 })
+
+test('cancellation requested during Agent creation prevents execution', async () => {
+  const fake = fakeContext()
+  const agents = (fake.ctx as any).agents
+  const create = agents.create.bind(agents)
+  let releaseCreate!: () => void
+  const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
+  agents.create = async (options: unknown) => {
+    await createGate
+    return create(options)
+  }
+  const runner = new DshAutomationRunner(fake.ctx, 'danger-full-access')
+
+  const resultPromise = runner.run(task, run)
+  assert.equal(runner.cancel(run.id, 'manual'), true)
+  releaseCreate()
+  const result = await resultPromise
+
+  assert.equal(result.status, 'failed')
+  assert.match(result.error ?? '', /before execution: manual/)
+  assert.equal(fake.messages.length, 0)
+  assert.equal(fake.disposed(), 0)
+})
+
+test('active cancellation reaches Agent.cancel and preserves the session', async () => {
+  const fake = fakeContext()
+  const agents = (fake.ctx as any).agents
+  const create = agents.create.bind(agents)
+  let markIdleStarted!: () => void
+  let releaseIdle!: () => void
+  const idleStarted = new Promise<void>((resolve) => { markIdleStarted = resolve })
+  const idleGate = new Promise<void>((resolve) => { releaseIdle = resolve })
+  agents.create = async (options: unknown) => {
+    const handle = await create(options)
+    const events = handle.agent.session.events as Array<Record<string, unknown>>
+    handle.agent.followup = (message: unknown) => {
+      fake.order.push('followup')
+      fake.messages.push(message)
+    }
+    handle.agent.whenIdle = async () => {
+      fake.order.push('idle')
+      markIdleStarted()
+      await idleGate
+    }
+    handle.agent.cancel = (cause: { kind: string; reason?: string }) => {
+      fake.order.push(`cancel:${cause.kind}:${cause.reason}`)
+      events.push({ type: 'turn/end', seq: 1, time: Date.now(), data: { turn: 1, reason: { kind: 'aborted', reason: cause } } })
+      releaseIdle()
+    }
+    return handle
+  }
+  const runner = new DshAutomationRunner(fake.ctx, 'danger-full-access')
+
+  const resultPromise = runner.run(task, run)
+  await idleStarted
+  assert.equal(runner.cancel(run.id, 'timeout'), true)
+  const result = await resultPromise
+
+  assert.equal(result.status, 'failed')
+  assert.match(result.error ?? '', /aborted/)
+  assert.ok(fake.order.includes('cancel:hook:automation_timeout'))
+  assert.equal(fake.disposed(), 0)
+})

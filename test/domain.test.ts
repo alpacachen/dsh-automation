@@ -87,6 +87,19 @@ test('runNow does not change schedule and rejects overlapping run', async (t) =>
   )
 })
 
+test('queued run can be canceled without changing its schedule', async (t) => {
+  const { domain } = await setup(t)
+  const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))
+  const nextRunAt = task.nextRunAt
+  const queued = await domain.runNow(task.id, Date.parse('2026-03-20T01:00:00.000Z'))
+  const canceled = await domain.cancelQueuedRun(task.id, queued.id, Date.parse('2026-03-20T01:01:00.000Z'))
+  assert.equal(canceled.status, 'canceled')
+  assert.equal(canceled.finishedAt, '2026-03-20T01:01:00.000Z')
+  assert.equal(domain.get(task.id).nextRunAt, nextRunAt)
+  assert.equal(domain.get(task.id).runs.at(-1)?.status, 'canceled')
+  await assert.rejects(() => domain.cancelQueuedRun(task.id, queued.id, Date.now()), /does not have that queued run/)
+})
+
 test('pause skips recurring occurrences and resume preserves wall-clock anchor', async (t) => {
   const { domain } = await setup(t)
   const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))
