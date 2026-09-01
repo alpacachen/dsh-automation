@@ -227,6 +227,25 @@ export function registerAutomationTools(
     presentCall: () => ({ card: 'generic', title: 'List automations', kind: 'read' }),
   })))
 
+  disposers.push(toolCtx.tools.register(defineTool({
+    name: 'automation_run',
+    description: 'Queue one immediate manual run without changing the automation schedule.',
+    parameters: {
+      id: { type: 'string', required: true, description: 'Exact automation id.' },
+    },
+    output: { schema: ACTION_SCHEMA, render },
+    async execute(args, exec) {
+      try {
+        if (exec.agent !== agent) throw new Error('automation_run must run in its owning agent scope.')
+        const run = await controller.runNow(args.id)
+        return { ok: true as const, id: run.id, status: run.status, message: `Queued manual run ${run.id} for ${args.id}.` }
+      } catch (error) {
+        return failure(error)
+      }
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Run automation', kind: 'other', rawInput: args.id }),
+  })))
+
   for (const definition of [
     {
       name: 'automation_delete',

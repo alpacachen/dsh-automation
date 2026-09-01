@@ -42,6 +42,11 @@ function setup() {
     delete: async () => { calls.push('delete'); return true },
     pause: async () => { calls.push('pause'); return { ...task, status: 'paused' } },
     resume: async () => { calls.push('resume'); return task },
+    runNow: async (id: string) => {
+      calls.push('run')
+      if (id === 'busy') throw new Error('Automation busy already has a queued or running run.')
+      return { id: 'run-manual', status: 'queued' }
+    },
   } as unknown as AutomationController
   const dispose = registerAutomationTools(rootCtx, toolCtx, agent, controller)
   const byName = (name: string) => definitions.find((definition) => definition.name === name)
@@ -57,6 +62,7 @@ test('registers complete Agent management tool surface and disposes it', async (
     'automation_list',
     'automation_pause',
     'automation_resume',
+    'automation_run',
     'automation_update',
   ])
   const created = await fixture.byName('automation_create').execute({
@@ -67,13 +73,20 @@ test('registers complete Agent management tool surface and disposes it', async (
   assert.equal(created.ok, true)
   assert.match(created.message, /danger-full-access/)
   assert.equal((await fixture.byName('automation_list').execute({}, fixture.exec)).tasks.length, 1)
+  const run = await fixture.byName('automation_run').execute({ id: 'automation-task' }, fixture.exec)
+  assert.deepEqual(run, {
+    ok: true,
+    id: 'run-manual',
+    status: 'queued',
+    message: 'Queued manual run run-manual for automation-task.',
+  })
   await fixture.byName('automation_update').execute({ id: 'automation-task', prompt: 'Updated work.' }, fixture.exec)
   await fixture.byName('automation_pause').execute({ id: 'automation-task' }, fixture.exec)
   await fixture.byName('automation_resume').execute({ id: 'automation-task', run_now: true }, fixture.exec)
   await fixture.byName('automation_delete').execute({ id: 'automation-task' }, fixture.exec)
-  assert.deepEqual(fixture.calls, ['create', 'update', 'pause', 'resume', 'delete'])
+  assert.deepEqual(fixture.calls, ['create', 'run', 'update', 'pause', 'resume', 'delete'])
   fixture.dispose()
-  assert.equal(fixture.disposed(), 6)
+  assert.equal(fixture.disposed(), 7)
 })
 
 test('create rejects mixed or incomplete schedule selectors and wrong agent scope', async () => {
@@ -102,4 +115,7 @@ test('create rejects mixed or incomplete schedule selectors and wrong agent scop
   })
   assert.equal(wrongScope.ok, false)
   assert.match(wrongScope.error, /owning agent scope/)
+  const busyRun = await fixture.byName('automation_run').execute({ id: 'busy' }, fixture.exec)
+  assert.equal(busyRun.ok, false)
+  assert.match(busyRun.error, /queued or running run/)
 })
