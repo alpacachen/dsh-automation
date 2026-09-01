@@ -44,6 +44,8 @@ const TASK_SUMMARY_SCHEMA = {
     nextRunAt: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
     running: { type: 'boolean', required: true },
     lastRunStatus: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
+    notificationPolicy: { type: 'string', required: true },
+    consecutiveFailures: { type: 'number', required: true },
   },
 } as const
 
@@ -84,6 +86,8 @@ function summary(task: AutomationTaskView) {
     nextRunAt: task.nextRunAt,
     running: task.running,
     lastRunStatus: task.runs.at(-1)?.status ?? null,
+    notificationPolicy: task.notificationPolicy,
+    consecutiveFailures: task.consecutiveFailures,
   }
 }
 
@@ -134,7 +138,7 @@ export function registerAutomationTools(
 
   disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_create',
-    description: 'Create one durable unattended automation. Every run starts a fresh visible session with danger-full-access. Supply either once_at, or rrule + time_zone + start_at.',
+    description: 'Create one durable unattended automation. Every run starts a fresh visible session with danger-full-access. Supply either once_at, or rrule + time_zone + start_at. Ask for a notification policy when the user intent is ambiguous; otherwise default to failures.',
     parameters: {
       name: { type: 'string', required: true, description: 'Short task name.' },
       prompt: { type: 'string', required: true, description: 'Self-contained prompt for every fresh run session.' },
@@ -142,6 +146,8 @@ export function registerAutomationTools(
       rrule: { type: 'string', description: 'Single RFC 5545 RRULE line without DTSTART.' },
       time_zone: { type: 'string', description: 'IANA time zone for a recurring rule.' },
       start_at: { type: 'string', description: 'Recurring local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
+      notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Sidebar notification policy. Defaults to failures.' },
+      pause_after_failures: { type: 'boolean', description: 'Pause future scheduling after 3 consecutive failed or timed-out runs.' },
     },
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
@@ -164,12 +170,14 @@ export function registerAutomationTools(
             ...(agent.options.model === undefined ? {} : { model: agent.options.model }),
           },
           createdBySessionId: agent.id,
+          ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
+          ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
         })
         return {
           ok: true as const,
           id: task.id,
           status: task.status,
-          message: `Created ${task.name}; next run ${task.nextRunAt}. All runs use danger-full-access without approval prompts.`,
+          message: `Created ${task.name}; next run ${task.nextRunAt}; notifications ${task.notificationPolicy}. All runs use danger-full-access without approval prompts.`,
         }
       } catch (error) {
         return failure(error)
@@ -189,19 +197,23 @@ export function registerAutomationTools(
       rrule: { type: 'string', description: 'Replacement RFC 5545 RRULE line without DTSTART.' },
       time_zone: { type: 'string', description: 'Replacement IANA time zone.' },
       start_at: { type: 'string', description: 'Replacement local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
+      notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Replacement sidebar notification policy.' },
+      pause_after_failures: { type: 'boolean', description: 'Whether to pause after 3 consecutive failed or timed-out runs.' },
     },
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
         if (exec.agent !== agent) throw new Error('automation_update must run in its owning agent scope.')
         const schedule = updateSchedule(args)
-        if (args.name === undefined && args.prompt === undefined && schedule === undefined) {
+        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined) {
           throw new Error('Supply at least one field to update.')
         }
         const task = await controller.update(args.id, {
           ...(args.name === undefined ? {} : { name: args.name }),
           ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
           ...(schedule === undefined ? {} : { schedule }),
+          ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
+          ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
         })
         return { ok: true as const, id: task.id, status: task.status, message: `Updated ${task.id}; next run ${task.nextRunAt}.` }
       } catch (error) {

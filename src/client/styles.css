@@ -11,6 +11,7 @@
 }
 
 .automation-nav-trigger {
+  position: relative;
   display: flex;
   appearance: none;
   align-items: center;
@@ -20,6 +21,26 @@
   background: transparent;
   font: var(--dsw-font-s-14);
   transition: color 120ms var(--ds-ease-in-out), background-color 120ms var(--ds-ease-in-out), transform 120ms var(--ds-ease-in-out);
+}
+
+.automation-nav-badge {
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid var(--dsw-alias-bg-base);
+  border-radius: 999px;
+  background: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-bg-base);
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 12px;
+}
+
+.automation-nav-trigger.is-rail .automation-nav-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
 }
 
 .automation-nav-trigger.is-wide {
@@ -944,6 +965,12 @@
 
 .automation-run-copy {
   min-width: 0;
+}
+
+.automation-run-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .automation-run-line {

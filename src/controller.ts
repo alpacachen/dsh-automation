@@ -47,6 +47,10 @@ export class AutomationController {
     return deleted
   }
 
+  async markNotificationsRead(): Promise<void> {
+    await this.domain.markNotificationsRead()
+  }
+
   async pause(id: string): Promise<AutomationTask> {
     const task = await this.domain.pause(id, this.now())
     this.scheduler.requestDrive()

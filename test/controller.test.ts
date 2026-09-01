@@ -13,6 +13,7 @@ test('controller delegates mutations and requests scheduler recomputation', asyn
   const domain = {
     list: () => [task],
     get: (id: string) => ({ ...task, id }),
+    markNotificationsRead: async () => { calls.push('read') },
     create: async (_request: unknown, now: number) => { calls.push(`create:${now}`); return task },
     update: async (id: string, _request: unknown, now: number) => { calls.push(`update:${id}:${now}`); return task },
     delete: async (id: string) => { calls.push(`delete:${id}`); return true },
@@ -27,6 +28,7 @@ test('controller delegates mutations and requests scheduler recomputation', asyn
   assert.deepEqual(controller.list(), [task])
   assert.equal(controller.get('other').id, 'other')
   assert.deepEqual(controller.schedulerHealth(), health)
+  await controller.markNotificationsRead()
   await controller.create(createRequest({ kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }))
   await controller.update('task', { name: 'Updated' })
   await controller.pause('task')
@@ -34,6 +36,7 @@ test('controller delegates mutations and requests scheduler recomputation', asyn
   await controller.runNow('task')
   assert.equal(await controller.delete('task'), true)
   assert.deepEqual(calls, [
+    'read',
     'create:123', 'drive',
     'update:task:123', 'drive',
     'pause:task:123', 'drive',

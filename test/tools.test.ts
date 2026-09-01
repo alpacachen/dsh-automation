@@ -20,6 +20,10 @@ function setup() {
     status: 'active',
     nextRunAt: '2026-03-21T00:00:00.000Z',
     schedule: { kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' },
+    notificationPolicy: 'failures',
+    pauseAfterConsecutiveFailures: false,
+    consecutiveFailures: 0,
+    unreadNotifications: 0,
     runs: [],
   }
   const rootCtx = {
@@ -36,8 +40,14 @@ function setup() {
   } as unknown as Context
   const calls: string[] = []
   const controller = {
-    create: async () => { calls.push('create'); return task },
-    update: async () => { calls.push('update'); return task },
+    create: async (request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean }) => {
+      calls.push(`create:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}`)
+      return { ...task, notificationPolicy: request.notificationPolicy ?? 'failures', pauseAfterConsecutiveFailures: request.pauseAfterConsecutiveFailures ?? false }
+    },
+    update: async (_id: string, request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean }) => {
+      calls.push(`update:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}`)
+      return { ...task, ...request }
+    },
     list: () => [{ ...task, running: false }],
     delete: async () => { calls.push('delete'); return true },
     pause: async () => { calls.push('pause'); return { ...task, status: 'paused' } },
@@ -69,6 +79,8 @@ test('registers complete Agent management tool surface and disposes it', async (
     name: 'Task',
     prompt: 'Do work.',
     once_at: '2026-03-21T00:00:00.000Z',
+    notification_policy: 'always',
+    pause_after_failures: true,
   }, fixture.exec)
   assert.equal(created.ok, true)
   assert.match(created.message, /danger-full-access/)
@@ -80,11 +92,11 @@ test('registers complete Agent management tool surface and disposes it', async (
     status: 'queued',
     message: 'Queued manual run run-manual for automation-task.',
   })
-  await fixture.byName('automation_update').execute({ id: 'automation-task', prompt: 'Updated work.' }, fixture.exec)
+  await fixture.byName('automation_update').execute({ id: 'automation-task', prompt: 'Updated work.', notification_policy: 'never', pause_after_failures: false }, fixture.exec)
   await fixture.byName('automation_pause').execute({ id: 'automation-task' }, fixture.exec)
   await fixture.byName('automation_resume').execute({ id: 'automation-task', run_now: true }, fixture.exec)
   await fixture.byName('automation_delete').execute({ id: 'automation-task' }, fixture.exec)
-  assert.deepEqual(fixture.calls, ['create', 'run', 'update', 'pause', 'resume', 'delete'])
+  assert.deepEqual(fixture.calls, ['create:always:true', 'run', 'update:never:false', 'pause', 'resume', 'delete'])
   fixture.dispose()
   assert.equal(fixture.disposed(), 7)
 })

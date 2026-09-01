@@ -14,6 +14,10 @@ const task: AutomationTask = {
   status: 'active',
   schedule: { kind: 'recurring', rrule: 'FREQ=DAILY', timeZone: 'UTC', startAt: '2026-03-20T09:00:00' },
   nextRunAt: '2026-03-20T09:00:00.000Z',
+  notificationPolicy: 'failures',
+  pauseAfterConsecutiveFailures: false,
+  consecutiveFailures: 0,
+  unreadNotifications: 0,
   execution: {
     workspaceId: 'workspace-test',
     cwd: '/tmp/workspace',

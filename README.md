@@ -53,6 +53,8 @@ Each task card lets you:
 - change the name, prompt, or schedule;
 - run now, pause, resume, or resume and run;
 - open the latest session or any recent run;
+- choose failure-only, every-completion, or no sidebar notifications;
+- retry failed runs and optionally pause after three consecutive failures;
 - delete future scheduling while keeping existing sessions.
 
 ![Automation task list, run state, and quick actions](docs/screenshots/automation-list.png)
@@ -81,6 +83,8 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 - Runs time out after one hour by default; set `maxRunDurationMs` in plugin config to change the limit.
 - Queued or running work can be stopped without moving its future schedule.
 - A run active during an unexpected restart is marked **outcome unknown** instead of being reported as failed or retried.
+- Notification-worthy results add a persistent unread badge to the Automations sidebar action.
+- Successful runs clear the consecutive-failure count; tasks can optionally auto-pause after three failures or timeouts.
 - DSH must be running when work is due; after restart, only the latest missed occurrence runs.
 - Transient scheduler failures retry automatically with bounded exponential backoff.
 - Paused occurrences are skipped; **Resume & run** does not move the original schedule.
@@ -101,8 +105,8 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 
 | Tool | Purpose |
 | --- | --- |
-| `automation_create` | Create a one-time or recurring task |
-| `automation_update` | Change its name, prompt, or schedule |
+| `automation_create` | Create a task with notification and failure-pause policy |
+| `automation_update` | Change its name, prompt, schedule, or recovery policy |
 | `automation_list` | List tasks and current run state |
 | `automation_run` | Queue one immediate run without changing the schedule |
 | `automation_pause` | Pause future scheduling |

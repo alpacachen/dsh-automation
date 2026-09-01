@@ -18,6 +18,8 @@ const API = '/api/automation/v1'
 const STYLE_ATTRIBUTE = 'data-dsh-automation-style'
 let panelOpen = false
 const panelListeners = new Set<() => void>()
+let unreadCount = 0
+const unreadListeners = new Set<() => void>()
 const pendingDrafts = new Map<SessionId, string>()
 const draftListeners = new Set<() => void>()
 let draftRevision = 0
@@ -70,6 +72,22 @@ function usePanelOpen(): boolean {
       return () => panelListeners.delete(listener)
     },
     () => panelOpen,
+  )
+}
+
+function setUnreadCount(value: number): void {
+  if (unreadCount === value) return
+  unreadCount = value
+  for (const listener of unreadListeners) listener()
+}
+
+function useUnreadCount(): number {
+  return React.useSyncExternalStore(
+    (listener) => {
+      unreadListeners.add(listener)
+      return () => unreadListeners.delete(listener)
+    },
+    () => unreadCount,
   )
 }
 
@@ -126,16 +144,36 @@ async function request(path: string, options: RequestInit = {}): Promise<unknown
 
 function AutomationButton({ wide }: { wide: boolean }) {
   const { t } = useLocale()
+  const unread = useUnreadCount()
+  React.useEffect(() => {
+    let active = true
+    const refreshUnread = async () => {
+      try {
+        const value = await request('/tasks') as { tasks: AutomationTaskView[] }
+        if (active) setUnreadCount(value.tasks.reduce((sum, task) => sum + task.unreadNotifications, 0))
+      } catch {}
+    }
+    void refreshUnread()
+    const timer = window.setInterval(() => void refreshUnread(), 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
   return (
     <button
       type="button"
       className={`automation-nav-trigger ${wide ? 'is-wide' : 'is-rail'}`}
-      aria-label={t('openAutomations')}
+      aria-label={unread > 0 ? `${t('openAutomations')}. ${t('unreadNotifications', { count: unread })}` : t('openAutomations')}
       title={t('automations')}
-      onClick={() => setPanelOpen(true)}
+      onClick={() => {
+        setPanelOpen(true)
+        void request('/notifications/read', { method: 'POST' }).then(() => setUnreadCount(0)).catch(() => undefined)
+      }}
     >
       <span className="automation-nav-icon"><Icon name="clock" size={18} /></span>
       {wide && <span className="automation-nav-label">{t('automations')}</span>}
+      {unread > 0 && <span className="automation-nav-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span>}
     </button>
   )
 }
@@ -198,13 +236,19 @@ function triggerLabel(trigger: string, t: typeof translate): string {
   return trigger
 }
 
+function notificationPolicyLabel(policy: AutomationTaskView['notificationPolicy'], t: typeof translate): string {
+  if (policy === 'always') return t('notificationAlways')
+  if (policy === 'never') return t('notificationNever')
+  return t('notificationFailures')
+}
+
 function statusClass(status: string): string {
   return ['active', 'paused', 'completed', 'queued', 'running', 'succeeded', 'failed', 'interrupted', 'outcome_unknown', 'timed_out', 'canceled'].includes(status)
     ? `is-${status}`
     : 'is-neutral'
 }
 
-type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule'>>
+type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>>
 
 const WEEKDAY_KEYS = {
   MO: 'weekdayMonday',
@@ -245,6 +289,8 @@ function EditTaskForm({
     : task.nextRunAt ?? new Date(Date.now() + 60 * 60_000).toISOString()
   const [name, setName] = React.useState(task.name)
   const [prompt, setPrompt] = React.useState(task.prompt)
+  const [notificationPolicy, setNotificationPolicy] = React.useState(task.notificationPolicy)
+  const [pauseAfterFailures, setPauseAfterFailures] = React.useState(task.pauseAfterConsecutiveFailures)
   const [kind, setKind] = React.useState<AutomationTaskView['schedule']['kind']>(task.schedule.kind)
   const [onceAt, setOnceAt] = React.useState(toLocalDateTime(fallbackInstant))
   const defaultMonthDay = String(Number((task.schedule.kind === 'recurring' ? task.schedule.startAt : toLocalDateTime(fallbackInstant)).slice(8, 10)))
@@ -266,7 +312,8 @@ function EditTaskForm({
   const scheduleChanged = task.schedule.kind !== kind || (kind === 'once'
     ? task.schedule.kind !== 'once' || onceAt !== toLocalDateTime(task.schedule.fireAt)
     : task.schedule.kind !== 'recurring' || effectiveRrule !== initialComparableRrule || timeZone !== task.schedule.timeZone || normalizedStartAt !== task.schedule.startAt)
-  const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged
+  const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged ||
+    notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
 
   return (
     <form
@@ -282,6 +329,8 @@ function EditTaskForm({
           ...(name.trim() === task.name ? {} : { name }),
           ...(prompt.trim() === task.prompt ? {} : { prompt }),
           ...(schedule === undefined ? {} : { schedule }),
+          ...(notificationPolicy === task.notificationPolicy ? {} : { notificationPolicy }),
+          ...(pauseAfterFailures === task.pauseAfterConsecutiveFailures ? {} : { pauseAfterConsecutiveFailures: pauseAfterFailures }),
         })
       }}
     >
@@ -423,6 +472,21 @@ function EditTaskForm({
             </label>
           </>
         )}
+        <label className="automation-field">
+          <span>{t('notifications')}</span>
+          <select value={notificationPolicy} onChange={(event) => setNotificationPolicy(event.target.value as AutomationTaskView['notificationPolicy'])}>
+            <option value="failures">{t('notificationFailures')}</option>
+            <option value="always">{t('notificationAlways')}</option>
+            <option value="never">{t('notificationNever')}</option>
+          </select>
+        </label>
+        <label className="automation-field">
+          <span>{t('pauseAfterFailures')}</span>
+          <select value={pauseAfterFailures ? 'enabled' : 'disabled'} onChange={(event) => setPauseAfterFailures(event.target.value === 'enabled')}>
+            <option value="disabled">{t('disabled')}</option>
+            <option value="enabled">{t('enabled')}</option>
+          </select>
+        </label>
       </fieldset>
       <div className="automation-editor-actions">
         <button type="button" className="automation-button" disabled={saving} onClick={onCancel}>{t('cancel')}</button>
@@ -648,6 +712,14 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                       <Icon name="folder" />
                       <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
                     </div>
+                    <div className="automation-fact">
+                      <Icon name="shield" />
+                      <span><b>{t('notifications')}</b>{notificationPolicyLabel(task.notificationPolicy, t)}</span>
+                    </div>
+                    <div className="automation-fact">
+                      <Icon name="close" />
+                      <span><b>{t('consecutiveFailures')}</b>{task.consecutiveFailures}</span>
+                    </div>
                   </div>
 
                   {latestResult?.summary !== undefined && (
@@ -761,11 +833,18 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                               {run.summary !== undefined && <p className="automation-run-summary">{run.summary}</p>}
                               {run.error !== undefined && <p className="automation-run-error">{run.error}</p>}
                             </div>
-                            {run.sessionId !== undefined && (
-                              <button type="button" className="automation-button is-compact" onClick={() => ctx.sessions.open(run.sessionId as SessionId)}>
-                                {t('open')}<Icon name="external" size={14} />
-                              </button>
-                            )}
+                            <div className="automation-run-actions">
+                              {['failed', 'timed_out', 'interrupted', 'outcome_unknown'].includes(run.status) && (
+                                <button type="button" className="automation-button is-compact" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST' })}>
+                                  {t('retry')}
+                                </button>
+                              )}
+                              {run.sessionId !== undefined && (
+                                <button type="button" className="automation-button is-compact" onClick={() => ctx.sessions.open(run.sessionId as SessionId)}>
+                                  {t('open')}<Icon name="external" size={14} />
+                                </button>
+                              )}
+                            </div>
                           </li>
                         })}
                       </ol>

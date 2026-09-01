@@ -3,6 +3,7 @@ import { instant, latestDueOccurrence, nextOccurrence, validateSchedule } from '
 import { AutomationStore } from './store.js'
 import type {
   AutomationRun,
+  AutomationRunStatus,
   AutomationSchedule,
   AutomationTask,
   AutomationTaskView,
@@ -41,6 +42,16 @@ function nonTerminal(run: AutomationRun): boolean {
   return run.status === 'queued' || run.status === 'running'
 }
 
+function failedOutcome(status: AutomationRunStatus): boolean {
+  return status === 'failed' || status === 'timed_out'
+}
+
+function shouldNotify(task: AutomationTask, status: AutomationRunStatus): boolean {
+  if (task.notificationPolicy === 'never') return false
+  if (task.notificationPolicy === 'always') return true
+  return failedOutcome(status) || status === 'interrupted' || status === 'outcome_unknown'
+}
+
 function makeRun(trigger: AutomationRun['trigger'], now: number, scheduledAt?: number): AutomationRun {
   return {
     id: `run-${randomUUID()}`,
@@ -77,6 +88,7 @@ export class AutomationDomain {
           run.status = 'outcome_unknown'
           run.finishedAt = instant(now)
           run.error = 'DSH restarted before this automation run reported its outcome; it may have completed.'
+          if (shouldNotify(task, run.status)) task.unreadNotifications += 1
         }
         pruneRuns(task, this.maxRunHistory)
       }
@@ -117,6 +129,10 @@ export class AutomationDomain {
       status: 'active',
       schedule,
       nextRunAt: instant(first),
+      notificationPolicy: request.notificationPolicy ?? 'failures',
+      pauseAfterConsecutiveFailures: request.pauseAfterConsecutiveFailures ?? false,
+      consecutiveFailures: 0,
+      unreadNotifications: 0,
       execution: request.execution,
       security: {
         permissionPreset: 'danger-full-access',
@@ -135,7 +151,7 @@ export class AutomationDomain {
     if (this.store.snapshot().tasks[id] === undefined) {
       throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
     }
-    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined) {
+    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined) {
       throw new Error('Supply at least one field to update.')
     }
     const name = request.name?.trim()
@@ -153,6 +169,10 @@ export class AutomationDomain {
       if (task === undefined) throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
       if (name !== undefined) task.name = name
       if (prompt !== undefined) task.prompt = prompt
+      if (request.notificationPolicy !== undefined) task.notificationPolicy = request.notificationPolicy
+      if (request.pauseAfterConsecutiveFailures !== undefined) {
+        task.pauseAfterConsecutiveFailures = request.pauseAfterConsecutiveFailures
+      }
       if (schedule !== undefined) {
         task.schedule = schedule
         if (task.status === 'paused') {
@@ -175,6 +195,13 @@ export class AutomationDomain {
       delete state.tasks[id]
     })
     return true
+  }
+
+  async markNotificationsRead(): Promise<void> {
+    if (!Object.values(this.store.snapshot().tasks).some((task) => task.unreadNotifications > 0)) return
+    await this.store.mutate((state) => {
+      for (const task of Object.values(state.tasks)) task.unreadNotifications = 0
+    })
   }
 
   async pause(id: string, now: number): Promise<AutomationTask> {
@@ -328,6 +355,15 @@ export class AutomationDomain {
       if (outcome.sessionId !== undefined) run.sessionId = outcome.sessionId
       if (outcome.summary !== undefined) run.summary = outcome.summary
       if (outcome.error !== undefined) run.error = outcome.error
+      if (outcome.status === 'succeeded') current.consecutiveFailures = 0
+      else if (failedOutcome(outcome.status)) current.consecutiveFailures += 1
+      if (shouldNotify(current, outcome.status)) current.unreadNotifications += 1
+      if (current.pauseAfterConsecutiveFailures && current.consecutiveFailures >= 3 && current.status === 'active') {
+        current.status = 'paused'
+        current.pausedAt = instant(now)
+        if (current.nextRunAt !== null) current.pausedNextRunAt = current.nextRunAt
+        current.nextRunAt = null
+      }
       pruneRuns(current, this.maxRunHistory)
     })
   }
