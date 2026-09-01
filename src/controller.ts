@@ -1,4 +1,4 @@
-import type { AutomationDomain } from './domain.js'
+import { AutomationDomainError, type AutomationDomain } from './domain.js'
 import type { AutomationScheduler } from './scheduler.js'
 import type {
   AutomationRun,
@@ -63,5 +63,22 @@ export class AutomationController {
     const run = await this.domain.runNow(id, this.now())
     this.scheduler.requestDrive()
     return run
+  }
+
+  async stop(id: string): Promise<{ runId: string; status: 'canceling' | 'canceled' }> {
+    const task = this.domain.get(id)
+    const run = task.runs.find((entry) => entry.status === 'queued' || entry.status === 'running')
+    if (run === undefined) {
+      throw new AutomationDomainError('invalid_state', `Automation ${id} has no queued or running run.`)
+    }
+    if (run.status === 'queued') {
+      await this.domain.cancelQueuedRun(id, run.id, this.now())
+      this.scheduler.requestDrive()
+      return { runId: run.id, status: 'canceled' }
+    }
+    if (!this.scheduler.cancelRun(id, run.id)) {
+      throw new AutomationDomainError('invalid_state', `Automation ${id} is no longer cancelable.`)
+    }
+    return { runId: run.id, status: 'canceling' }
   }
 }

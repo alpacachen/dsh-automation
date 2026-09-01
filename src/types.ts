@@ -44,7 +44,7 @@ export const AutomationRunSchema = z.strictObject({
   enqueuedAt: Instant,
   startedAt: Instant.optional(),
   finishedAt: Instant.optional(),
-  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'interrupted']),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'interrupted', 'timed_out', 'canceled']),
   sessionId: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
 })

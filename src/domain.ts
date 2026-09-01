@@ -31,7 +31,7 @@ export interface ClaimedRun {
 }
 
 export interface RunOutcome {
-  readonly status: 'succeeded' | 'failed'
+  readonly status: 'succeeded' | 'failed' | 'interrupted' | 'timed_out' | 'canceled'
   readonly sessionId?: string
   readonly error?: string
 }
@@ -238,6 +238,22 @@ export class AutomationDomain {
       }
       const run = makeRun('manual', now)
       task.runs.push(run)
+      pruneRuns(task, this.maxRunHistory)
+      return structuredClone(run)
+    })
+  }
+
+  async cancelQueuedRun(id: string, runId: string, now: number): Promise<AutomationRun> {
+    return this.store.mutate((state) => {
+      const task = state.tasks[id]
+      if (task === undefined) throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
+      const run = task.runs.find((entry) => entry.id === runId)
+      if (run === undefined || run.status !== 'queued') {
+        throw new AutomationDomainError('invalid_state', `Automation ${id} does not have that queued run.`)
+      }
+      run.status = 'canceled'
+      run.finishedAt = instant(now)
+      run.error = 'Canceled before execution.'
       pruneRuns(task, this.maxRunHistory)
       return structuredClone(run)
     })

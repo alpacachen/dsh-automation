@@ -9,6 +9,7 @@ import {
   RETRY_BASE_DELAY_MS,
   RETRY_MAX_DELAY_MS,
   type AutomationRunner,
+  type AutomationRunCancelReason,
   type Clock,
 } from '../src/scheduler.js'
 import type { AutomationRun, AutomationTask } from '../src/types.js'
@@ -46,9 +47,40 @@ class FakeClock implements Clock {
 
 class RecordingRunner implements AutomationRunner {
   readonly calls: Array<{ task: AutomationTask; run: AutomationRun }> = []
+  cancel(): boolean { return false }
   async run(task: AutomationTask, run: AutomationRun) {
     this.calls.push({ task, run })
     return { status: 'succeeded' as const, sessionId: `session-${run.id}` }
+  }
+}
+
+class CancelableRunner implements AutomationRunner {
+  readonly calls: string[] = []
+  readonly cancellations: Array<{ runId: string; reason: AutomationRunCancelReason }> = []
+  readonly started: Promise<void>
+  private markStarted!: () => void
+  private blockedRun: { id: string; resolve: (result: { status: 'failed'; sessionId: string; error: string }) => void } | undefined
+
+  constructor() {
+    this.started = new Promise((resolve) => { this.markStarted = resolve })
+  }
+
+  run(task: AutomationTask, run: AutomationRun) {
+    this.calls.push(task.name)
+    if (this.calls.length > 1) return Promise.resolve({ status: 'succeeded' as const, sessionId: `session-${run.id}` })
+    this.markStarted()
+    return new Promise<{ status: 'failed'; sessionId: string; error: string }>((resolve) => {
+      this.blockedRun = { id: run.id, resolve }
+    })
+  }
+
+  cancel(runId: string, reason: AutomationRunCancelReason): boolean {
+    if (this.blockedRun?.id !== runId) return false
+    this.cancellations.push({ runId, reason })
+    const blocked = this.blockedRun
+    this.blockedRun = undefined
+    blocked.resolve({ status: 'failed', sessionId: `session-${runId}`, error: `canceled: ${reason}` })
+    return true
   }
 }
 
@@ -105,6 +137,7 @@ test('global runner is serial and drains queued work in order', async (t) => {
   const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve })
   const calls: string[] = []
   const runner: AutomationRunner = {
+    cancel: () => false,
     async run(task, run) {
       calls.push(task.name)
       if (task.id === first.id) {
@@ -133,6 +166,7 @@ test('runner failure is recorded and does not block the next task', async (t) =>
   await domain.runNow(first.id, now)
   await domain.runNow(second.id, now + 1)
   const runner: AutomationRunner = {
+    cancel: () => false,
     async run(task, run) {
       if (task.id === first.id) throw new Error('injected runner failure')
       return { status: 'succeeded', sessionId: `session-${run.id}` }
@@ -303,4 +337,65 @@ test('retry backoff is capped', async () => {
     await clock.advanceTo(Date.parse(health.retryAt!))
   }
   await scheduler.stop()
+})
+
+test('run timeout cancels the active Agent and continues the global queue', async (t) => {
+  const now = Date.parse('2026-03-20T01:00:00.000Z')
+  const domain = await setup(t, now)
+  const first = await domain.create(createRequest({ kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }, 'First'), now)
+  const second = await domain.create(createRequest({ kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }, 'Second'), now)
+  const firstRun = await domain.runNow(first.id, now)
+  await domain.runNow(second.id, now + 1)
+  const clock = new FakeClock(now)
+  const runner = new CancelableRunner()
+  const scheduler = new AutomationScheduler(domain, runner, clock, () => undefined, 1_000)
+
+  scheduler.start()
+  await runner.started
+  await clock.advanceTo(now + 1_000)
+  await scheduler.whenSettled()
+
+  assert.deepEqual(runner.cancellations, [{ runId: firstRun.id, reason: 'timeout' }])
+  assert.deepEqual(runner.calls, ['First', 'Second'])
+  assert.equal(domain.get(first.id).runs.at(-1)?.status, 'timed_out')
+  assert.match(domain.get(first.id).runs.at(-1)?.error ?? '', /1000ms/)
+  assert.equal(domain.get(second.id).runs.at(-1)?.status, 'succeeded')
+  await scheduler.stop()
+})
+
+test('manual stop cancels the active Agent and preserves its session id', async (t) => {
+  const now = Date.parse('2026-03-20T01:00:00.000Z')
+  const domain = await setup(t, now)
+  const task = await domain.create(createRequest({ kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }), now)
+  const run = await domain.runNow(task.id, now)
+  const runner = new CancelableRunner()
+  const scheduler = new AutomationScheduler(domain, runner, new FakeClock(now))
+
+  scheduler.start()
+  await runner.started
+  assert.equal(scheduler.cancelRun(task.id, run.id), true)
+  await scheduler.whenSettled()
+
+  const finished = domain.get(task.id).runs.at(-1)
+  assert.equal(finished?.status, 'canceled')
+  assert.equal(finished?.sessionId, `session-${run.id}`)
+  assert.deepEqual(runner.cancellations, [{ runId: run.id, reason: 'manual' }])
+  await scheduler.stop()
+})
+
+test('scheduler shutdown cancels and drains an active Agent', async (t) => {
+  const now = Date.parse('2026-03-20T01:00:00.000Z')
+  const domain = await setup(t, now)
+  const task = await domain.create(createRequest({ kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }), now)
+  const run = await domain.runNow(task.id, now)
+  const runner = new CancelableRunner()
+  const scheduler = new AutomationScheduler(domain, runner, new FakeClock(now))
+
+  scheduler.start()
+  await runner.started
+  await scheduler.stop()
+
+  assert.deepEqual(runner.cancellations, [{ runId: run.id, reason: 'shutdown' }])
+  assert.equal(domain.get(task.id).runs.at(-1)?.status, 'interrupted')
+  assert.equal(scheduler.health().status, 'stopped')
 })

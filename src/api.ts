@@ -78,7 +78,7 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
           send(res, 200, { tasks: controller.list(), scheduler: controller.schedulerHealth() })
           return
         }
-        const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume))?$/.exec(suffix)
+        const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop))?$/.exec(suffix)
         if (match === null) {
           send(res, 404, { error: 'Automation API route not found.' })
           return
@@ -100,6 +100,10 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
         }
         if (action === 'run') {
           send(res, 202, { run: await controller.runNow(id) })
+          return
+        }
+        if (action === 'stop') {
+          send(res, 202, await controller.stop(id))
           return
         }
         if (action === 'pause') {

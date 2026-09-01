@@ -24,6 +24,7 @@ export const en = {
   next: 'Next',
   workspace: 'Workspace',
   runNow: 'Run now',
+  stopRun: 'Stop run',
   pause: 'Pause',
   resume: 'Resume',
   resumeAndRun: 'Resume & run',
@@ -96,6 +97,8 @@ export const en = {
   statusSucceeded: 'succeeded',
   statusFailed: 'failed',
   statusInterrupted: 'interrupted',
+  statusTimedOut: 'timed out',
+  statusCanceled: 'canceled',
   triggerManual: 'manual',
   triggerScheduled: 'scheduled',
 } as const
@@ -128,6 +131,7 @@ export const zh: Record<AutomationLocaleKey, string> = {
   next: '下次运行',
   workspace: '工作区',
   runNow: '立即运行',
+  stopRun: '停止运行',
   pause: '暂停',
   resume: '恢复',
   resumeAndRun: '恢复并运行',
@@ -200,6 +204,8 @@ export const zh: Record<AutomationLocaleKey, string> = {
   statusSucceeded: '成功',
   statusFailed: '失败',
   statusInterrupted: '已中断',
+  statusTimedOut: '已超时',
+  statusCanceled: '已取消',
   triggerManual: '手动',
   triggerScheduled: '定时',
 }

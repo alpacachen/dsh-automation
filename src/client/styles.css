@@ -489,8 +489,13 @@
 }
 
 .automation-status.is-failed,
-.automation-status.is-interrupted {
+.automation-status.is-interrupted,
+.automation-status.is-timed_out {
   color: var(--dsw-alias-state-error-primary);
+}
+
+.automation-status.is-canceled {
+  color: var(--dsw-alias-state-warn-primary);
 }
 
 .automation-task-facts {
@@ -913,11 +918,13 @@
 }
 
 .automation-run-dot.is-failed,
-.automation-run-dot.is-interrupted {
+.automation-run-dot.is-interrupted,
+.automation-run-dot.is-timed_out {
   color: var(--dsw-alias-state-error-primary);
 }
 
-.automation-run-dot.is-paused {
+.automation-run-dot.is-paused,
+.automation-run-dot.is-canceled {
   color: var(--dsw-alias-state-warn-primary);
 }
 
