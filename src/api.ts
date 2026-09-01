@@ -44,8 +44,8 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   return value as Record<string, unknown>
 }
 
-function parseUpdate(body: Record<string, unknown>): UpdateAutomationRequest {
-  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange'].includes(key))) {
+function parseUpdate(body: Record<string, unknown>, currentPermission: string): UpdateAutomationRequest {
+  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution'].includes(key))) {
     throw new Error('Update body contains an unknown field.')
   }
   if (body.name !== undefined && typeof body.name !== 'string') throw new Error('name must be a string.')
@@ -56,9 +56,10 @@ function parseUpdate(body: Record<string, unknown>): UpdateAutomationRequest {
   const schedule = body.schedule === undefined ? undefined : AutomationScheduleSchema.parse(body.schedule)
   const notificationPolicy = body.notificationPolicy === undefined ? undefined : NotificationPolicySchema.parse(body.notificationPolicy)
   const permissionPreset = body.permissionPreset === undefined ? undefined : AutomationPermissionPresetSchema.parse(body.permissionPreset)
-  if (permissionPreset !== undefined && body.confirmPermissionChange !== true) {
+  if (permissionPreset !== undefined && permissionPreset !== currentPermission && body.confirmPermissionChange !== true) {
     throw new Error('confirmPermissionChange must be true when changing permissions.')
   }
+  const execution = parseExecutionPatch(body.execution)
   return {
     ...(body.name === undefined ? {} : { name: body.name as string }),
     ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
@@ -66,6 +67,40 @@ function parseUpdate(body: Record<string, unknown>): UpdateAutomationRequest {
     ...(notificationPolicy === undefined ? {} : { notificationPolicy }),
     ...(body.pauseAfterConsecutiveFailures === undefined ? {} : { pauseAfterConsecutiveFailures: body.pauseAfterConsecutiveFailures as boolean }),
     ...(permissionPreset === undefined ? {} : { permissionPreset }),
+    ...(permissionPreset === undefined || body.confirmPermissionChange !== true ? {} : { permissionChangeConfirmed: true as const }),
+    ...(execution === undefined ? {} : { execution }),
+  }
+}
+
+function parseExecutionPatch(value: unknown): UpdateAutomationRequest['execution'] {
+  if (value === undefined) return undefined
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('execution must be an object.')
+  const input = value as Record<string, unknown>
+  if (Object.keys(input).length === 0) throw new Error('execution must contain at least one field.')
+  if (Object.keys(input).some((key) => !['agentPreset', 'provider', 'model', 'skills'].includes(key))) {
+    throw new Error('execution contains an unknown field.')
+  }
+  const nullableString = (key: 'agentPreset' | 'provider' | 'model') => {
+    const entry = input[key]
+    if (entry !== undefined && entry !== null && typeof entry !== 'string') throw new Error(`execution.${key} must be a string or null.`)
+    if (typeof entry === 'string' && !entry.trim()) throw new Error(`execution.${key} must not be empty.`)
+    return entry as string | null | undefined
+  }
+  const agentPreset = nullableString('agentPreset')
+  const provider = nullableString('provider')
+  const model = nullableString('model')
+  if ((provider === undefined) !== (model === undefined) || (provider !== undefined && ((provider === null) !== (model === null)))) {
+    throw new Error('execution.provider and execution.model must be set or cleared together.')
+  }
+  if (input.skills !== undefined && (!Array.isArray(input.skills) || input.skills.some((name) => typeof name !== 'string'))) {
+    throw new Error('execution.skills must be an array of strings.')
+  }
+  const skills = input.skills as string[] | undefined
+  return {
+    ...(agentPreset === undefined ? {} : { agentPreset }),
+    ...(provider === undefined ? {} : { provider }),
+    ...(model === undefined ? {} : { model }),
+    ...(skills === undefined ? {} : { skills }),
   }
 }
 
@@ -94,15 +129,20 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
           send(res, 200, { tasks: controller.list(), scheduler: controller.schedulerHealth() })
           return
         }
-        const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop))?$/.exec(suffix)
+        const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop|options))?$/.exec(suffix)
         if (match === null) {
           send(res, 404, { error: 'Automation API route not found.' })
           return
         }
         const id = decodeURIComponent(match[1]!)
         const action = match[2]
+        if (req.method === 'GET' && action === 'options') {
+          const candidate = url.searchParams.has('agentPreset') ? url.searchParams.get('agentPreset') || null : undefined
+          send(res, 200, { options: await controller.options(id, candidate) })
+          return
+        }
         if (req.method === 'PATCH' && action === undefined) {
-          send(res, 200, { task: await controller.update(id, parseUpdate(await readJson(req))) })
+          send(res, 200, { task: await controller.update(id, parseUpdate(await readJson(req), controller.get(id).security.permissionPreset)) })
           return
         }
         if (req.method === 'DELETE' && action === undefined) {

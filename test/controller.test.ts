@@ -76,3 +76,71 @@ test('controller stops queued and running work through their owning layer', asyn
   assert.deepEqual(await controller.stop('task'), { runId: 'run', status: 'canceling' })
   assert.deepEqual(calls, ['cancelQueued:task:run:123', 'drive', 'cancelRunning:task:run'])
 })
+
+test('controller validates the fully materialized execution before create and update', async () => {
+  const validations: unknown[] = []
+  const current = {
+    id: 'task', execution: { workspaceId: 'workspace', cwd: '/tmp/workspace', agentPreset: 'standard', provider: 'provider', model: 'model', skills: [] },
+    security: { permissionPreset: 'danger-full-access' },
+  }
+  const domain = {
+    get: () => current,
+    create: async () => current,
+    update: async (_id: string, _request: unknown, _now: number, beforeCommit?: (task: typeof current) => Promise<void>) => {
+      await beforeCommit?.(current)
+      return current
+    },
+  } as unknown as AutomationDomain
+  const scheduler = { requestDrive() {} } as unknown as AutomationScheduler
+  const configuration = {
+    async validate(execution: unknown, permission: string) { validations.push({ execution, permission }) },
+    async options(cwd: string, preset?: string) { return { cwd, preset } },
+  }
+  const controller = new AutomationController(domain, scheduler, () => 123, configuration as any)
+  await controller.create(createRequest({ kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }))
+  await assert.rejects(
+    controller.update('task', { permissionPreset: 'read-only' }),
+    /confirmation is required to change permissions/,
+  )
+  await controller.update('task', {
+    permissionPreset: 'workspace-safe',
+    permissionChangeConfirmed: true,
+    execution: { agentPreset: null, provider: null, model: null, skills: [' report '] },
+  })
+  assert.deepEqual(validations[1], {
+    execution: { workspaceId: 'workspace', cwd: '/tmp/workspace', skills: ['report'] },
+    permission: 'workspace-safe',
+  })
+  assert.deepEqual(await controller.options('task', null), { cwd: '/tmp/workspace', preset: undefined })
+})
+
+test('controller preserves a partial legacy model override during unrelated updates', async () => {
+  const validations: unknown[] = []
+  const current = {
+    id: 'task',
+    execution: { workspaceId: 'workspace', cwd: '/tmp/workspace', provider: 'provider', skills: [] },
+    security: { permissionPreset: 'read-only' },
+  }
+  const domain = {
+    get: () => current,
+    update: async (_id: string, _request: unknown, _now: number, beforeCommit?: (task: typeof current) => Promise<void>) => {
+      await beforeCommit?.(current)
+      return current
+    },
+  } as unknown as AutomationDomain
+  const scheduler = { requestDrive() {} } as unknown as AutomationScheduler
+  const configuration = {
+    async validate(execution: unknown, permission: string, options: unknown) {
+      validations.push({ execution, permission, options })
+    },
+  }
+  const controller = new AutomationController(domain, scheduler, () => 123, configuration as any)
+
+  await controller.update('task', { name: 'Updated' })
+
+  assert.deepEqual(validations, [{
+    execution: current.execution,
+    permission: 'read-only',
+    options: { allowLegacyPartialModel: true },
+  }])
+})

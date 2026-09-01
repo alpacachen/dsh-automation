@@ -24,6 +24,7 @@ const task: AutomationTask = {
     agentPreset: 'standard',
     provider: 'provider',
     model: 'model',
+    skills: [],
   },
   security: {
     permissionPreset: 'danger-full-access',
@@ -62,10 +63,16 @@ function fakeContext(
     },
     agentPresets: {
       async mount() { order.push('mount') },
+      async resolve(id?: string) { return { id: id ?? 'standard', trust: 'system', path: '/preset' } },
+      async standingKeyFor() { return {} },
+      serviceFor() { return undefined },
     },
     permissionPresets: {
       set(_session: unknown, preset: string) { order.push(`permission:${preset}`) },
+      resolve() { return { sandbox: 'danger-full-access', approval: 'never' } },
     },
+    llm: { async resolveCallConfig(config: unknown) { return config } },
+    skills: { async get() { return undefined }, async list() { return [] } },
     sessionTitle: {
       rename(_session: unknown, title: string) { order.push(`title:${title}`) },
     },
@@ -80,7 +87,9 @@ function fakeContext(
         const session = { events }
         return {
           agent: {
+            ctx: {},
             session,
+            inject(message: unknown) { order.push('inject'); messages.push(message) },
             followup(message: unknown) {
               order.push('followup')
               messages.push(message)
@@ -135,6 +144,59 @@ test('runner applies each task permission preset before execution', async () => 
   assert.match(JSON.stringify(fake.messages[0]), /Permission preset: read-only/)
 })
 
+test('runner revalidates then injects selected skills in order before the task prompt', async () => {
+  const fake = fakeContext()
+  const configured = { ...task, execution: { ...task.execution, skills: ['first', 'second'] }, security: { ...task.security, permissionPreset: 'workspace-safe' } }
+  const configuration = {
+    async validate() { fake.order.push('validate') },
+    async loadSelectedSkills() {
+      return ['first', 'second'].map((name) => ({ text: `<skill_content name="${name}">${name}</skill_content>`, source: { kind: 'skill-invocation' as const, name, form: 'instructions' as const } }))
+    },
+  }
+  await new DshAutomationRunner(fake.ctx, configuration as any).run(configured, run)
+  assert.deepEqual(fake.order.filter((entry) => ['validate', 'mount', 'permission:workspace-safe', 'inject', 'followup'].includes(entry)), [
+    'validate', 'mount', 'permission:workspace-safe', 'inject', 'inject', 'followup',
+  ])
+  assert.equal((fake.messages[0] as any).source.name, 'first')
+  assert.equal((fake.messages[1] as any).source.name, 'second')
+})
+
+test('runner cancellation releases a run blocked in configuration validation', async () => {
+  const fake = fakeContext()
+  const configuration = {
+    validate: async () => new Promise<void>(() => undefined),
+    async loadSelectedSkills() { return [] },
+  }
+  const runner = new DshAutomationRunner(fake.ctx, configuration as any)
+
+  const pending = runner.run(task, run)
+  await Promise.resolve()
+  assert.equal(runner.cancel(run.id, 'timeout'), true)
+
+  await assert.rejects(pending, /canceled before Agent creation/)
+})
+
+test('runner cancellation releases a run blocked while loading selected skills', async () => {
+  const fake = fakeContext()
+  let markLoadingStarted!: () => void
+  const loadingStarted = new Promise<void>((resolve) => { markLoadingStarted = resolve })
+  const configuration = {
+    async validate() {},
+    async loadSelectedSkills() {
+      markLoadingStarted()
+      return new Promise<never>(() => undefined)
+    },
+  }
+  const runner = new DshAutomationRunner(fake.ctx, configuration as any)
+
+  const pending = runner.run(task, run)
+  await loadingStarted
+  assert.equal(runner.cancel(run.id, 'timeout'), true)
+
+  await assert.rejects(pending, /canceled before Agent creation/)
+  assert.equal(fake.messages.length, 0)
+})
+
 test('each invocation uses a different session id', async () => {
   const fake = fakeContext()
   const runner = new DshAutomationRunner(fake.ctx)
@@ -183,14 +245,18 @@ test('cancellation requested during Agent creation prevents execution', async ()
   const agents = (fake.ctx as any).agents
   const create = agents.create.bind(agents)
   let releaseCreate!: () => void
+  let markCreateEntered!: () => void
+  const createEntered = new Promise<void>((resolve) => { markCreateEntered = resolve })
   const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
   agents.create = async (options: unknown) => {
+    markCreateEntered()
     await createGate
     return create(options)
   }
   const runner = new DshAutomationRunner(fake.ctx)
 
   const resultPromise = runner.run(task, run)
+  await createEntered
   assert.equal(runner.cancel(run.id, 'manual'), true)
   releaseCreate()
   const result = await resultPromise

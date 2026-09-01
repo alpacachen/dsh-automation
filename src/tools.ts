@@ -4,6 +4,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import type { AutomationController } from './controller.js'
 import type { AutomationSchedule, AutomationTaskView } from './types.js'
+import { AgentConfiguration } from './agent-configuration.js'
 
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-workspace'
@@ -46,6 +47,10 @@ const TASK_SUMMARY_SCHEMA = {
     lastRunStatus: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
     notificationPolicy: { type: 'string', required: true },
     permissionPreset: { type: 'string', required: true },
+    agentPreset: { type: 'string', required: true },
+    provider: { type: 'string', required: true },
+    model: { type: 'string', required: true },
+    skills: { type: 'array', required: true, items: { type: 'string' } },
     consecutiveFailures: { type: 'number', required: true },
   },
 } as const
@@ -89,6 +94,10 @@ function summary(task: AutomationTaskView) {
     lastRunStatus: task.runs.at(-1)?.status ?? null,
     notificationPolicy: task.notificationPolicy,
     permissionPreset: task.security.permissionPreset,
+    agentPreset: task.execution.agentPreset ?? 'Host default',
+    provider: task.execution.provider ?? 'Host default',
+    model: task.execution.model ?? 'Host default',
+    skills: task.execution.skills,
     consecutiveFailures: task.consecutiveFailures,
   }
 }
@@ -135,12 +144,53 @@ export function registerAutomationTools(
   toolCtx: Context,
   agent: Agent,
   controller: AutomationController,
+  agentConfiguration = new AgentConfiguration(rootCtx),
 ): () => void {
   const disposers: Array<() => void> = []
 
   disposers.push(toolCtx.tools.register(defineTool({
+    name: 'automation_options',
+    description: 'List the Host agent presets, provider/models, user-invocable skills, and permission presets available for automation configuration. Call this before selecting configuration ids. With an id, options use that task workspace and saved preset; agent_preset previews skills for a candidate preset. An empty agent_preset means the Host default.',
+    parameters: {
+      id: { type: 'string', description: 'Existing automation id. Omit to use this Agent workspace.' },
+      agent_preset: { type: 'string', description: 'Candidate preset id for skill discovery; empty means Host default.' },
+    },
+    output: {
+      schema: {
+        oneOf: [
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ok: { type: 'boolean', required: true, const: true },
+              options: { type: 'object', required: true, additionalProperties: true },
+            },
+          },
+          ERROR_SCHEMA,
+        ],
+      },
+      render,
+    },
+    async execute(args, exec) {
+      try {
+        if (exec.agent !== agent) throw new Error('automation_options must run in its owning agent scope.')
+        const candidate = args.agent_preset === undefined
+          ? undefined
+          : args.agent_preset || undefined
+        const options = args.id === undefined
+          ? await agentConfiguration.options(agent.session.header.cwd ?? (() => { throw new Error('The current session has no workspace directory.') })(), args.agent_preset === undefined ? rootCtx.agentPresets.composedPreset(agent.ctx) : candidate)
+          : await controller.options(args.id, args.agent_preset === undefined ? undefined : candidate ?? null)
+        return { ok: true as const, options: options as unknown as Record<string, JsonValue> }
+      } catch (error) {
+        return failure(error)
+      }
+    },
+    presentCall: () => ({ card: 'generic', title: 'Automation options', kind: 'read' }),
+  })))
+
+  disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_create',
-    description: 'Create one durable unattended automation. Every run starts a fresh visible session. Before calling, show one concise preview with name, schedule and time zone, current workspace, permission, notification policy, and failure-pause policy; wait for explicit user confirmation, then set creation_confirmed to true. Use read-only for inspection/reporting that must not modify files, or danger-full-access for tasks that need unrestricted writes. Supply either once_at, or rrule + time_zone + start_at. Ask for a notification policy when the user intent is ambiguous; otherwise default to failures.',
+    description: 'Create one durable unattended automation. Call automation_options before selecting Host ids. Before calling, show one concise preview with name, schedule/time zone, workspace, Agent preset, provider/model, ordered selected skills, exact Host permission label/id (including approval warning), notification policy, and failure-pause policy; wait for explicit user confirmation, then set creation_confirmed to true. Every run starts a fresh visible session. Presets with approval ask may wait until timeout because unattended runs never auto-approve. Supply either once_at, or rrule + time_zone + start_at.',
     parameters: {
       name: { type: 'string', required: true, description: 'Short task name.' },
       prompt: { type: 'string', required: true, description: 'Self-contained prompt for every fresh run session.' },
@@ -150,7 +200,11 @@ export function registerAutomationTools(
       start_at: { type: 'string', description: 'Recurring local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
       notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Sidebar notification policy. Defaults to failures.' },
       pause_after_failures: { type: 'boolean', description: 'Pause future scheduling after 3 consecutive failed or timed-out runs.' },
-      permission_preset: { type: 'string', required: true, enum: ['read-only', 'danger-full-access'], description: 'Confirmed permission for every run. Prefer read-only when no file changes are needed.' },
+      agent_preset: { type: 'string', description: 'Host Agent preset id. Omit to capture the creating Agent preset.' },
+      provider: { type: 'string', description: 'Provider override; must be supplied with model.' },
+      model: { type: 'string', description: 'Model override; must be supplied with provider.' },
+      skills: { type: 'array', items: { type: 'string' }, description: 'Ordered user-invocable skill names to preload. Defaults to none.' },
+      permission_preset: { type: 'string', required: true, description: 'Confirmed Host permission preset id for every run.' },
       creation_confirmed: { type: 'boolean', required: true, description: 'Must be true only after the user explicitly confirms the complete creation preview.' },
     },
     output: { schema: ACTION_SCHEMA, render },
@@ -161,6 +215,9 @@ export function registerAutomationTools(
         const cwd = agent.session.header.cwd
         if (cwd === undefined) throw new Error('The current session has no workspace directory.')
         const workspace = await rootCtx.workspaceRegistry.create(cwd)
+        if ((args.provider === undefined) !== (args.model === undefined)) throw new Error('provider and model must be supplied together.')
+        const capturedProvider = args.provider ?? agent.options.provider
+        const capturedModel = args.model ?? agent.options.model
         const task = await controller.create({
           name: args.name,
           prompt: args.prompt,
@@ -168,11 +225,11 @@ export function registerAutomationTools(
           execution: {
             workspaceId: workspace.id,
             cwd: workspace.path,
-            ...(rootCtx.agentPresets.composedPreset(agent.ctx) === undefined
+            ...((args.agent_preset ?? rootCtx.agentPresets.composedPreset(agent.ctx)) === undefined
               ? {}
-              : { agentPreset: rootCtx.agentPresets.composedPreset(agent.ctx)! }),
-            ...(agent.options.provider === undefined ? {} : { provider: agent.options.provider }),
-            ...(agent.options.model === undefined ? {} : { model: agent.options.model }),
+              : { agentPreset: args.agent_preset ?? rootCtx.agentPresets.composedPreset(agent.ctx)! }),
+            ...(capturedProvider === undefined || capturedModel === undefined ? {} : { provider: capturedProvider, model: capturedModel }),
+            skills: args.skills ?? [],
           },
           createdBySessionId: agent.id,
           permissionPreset: args.permission_preset,
@@ -194,7 +251,7 @@ export function registerAutomationTools(
 
   disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_update',
-    description: 'Update an existing automation. Omitted fields stay unchanged. To replace its schedule, supply either once_at, or all of rrule, time_zone, and start_at. Before changing permissions, show the new preset to the user and get explicit confirmation; set permission_confirmed only after they confirm.',
+    description: 'Update an existing automation. Call automation_options before selecting Host ids. Omitted fields stay unchanged; null clears an Agent preset or provider/model override, and skills replaces the ordered selection. Provider/model must be set or cleared together. Before an actual permission change, show the exact Host preset and get explicit confirmation; set permission_confirmed only after they confirm.',
     parameters: {
       id: { type: 'string', required: true, description: 'Exact automation id.' },
       name: { type: 'string', description: 'Replacement task name.' },
@@ -205,7 +262,11 @@ export function registerAutomationTools(
       start_at: { type: 'string', description: 'Replacement local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
       notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Replacement sidebar notification policy.' },
       pause_after_failures: { type: 'boolean', description: 'Whether to pause after 3 consecutive failed or timed-out runs.' },
-      permission_preset: { type: 'string', enum: ['read-only', 'danger-full-access'], description: 'Replacement permission preset for future runs.' },
+      agent_preset: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement Host Agent preset id, or null for Host default.' },
+      provider: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement provider, or null with model to use Host default.' },
+      model: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement model, or null with provider to use Host default.' },
+      skills: { type: 'array', items: { type: 'string' }, description: 'Replacement ordered selected skills; [] clears.' },
+      permission_preset: { type: 'string', description: 'Replacement Host permission preset id for future runs.' },
       permission_confirmed: { type: 'boolean', description: 'Required and true only after the user explicitly confirms a permission change.' },
     },
     output: { schema: ACTION_SCHEMA, render },
@@ -213,10 +274,11 @@ export function registerAutomationTools(
       try {
         if (exec.agent !== agent) throw new Error('automation_update must run in its owning agent scope.')
         const schedule = updateSchedule(args)
-        if (args.permission_preset !== undefined && args.permission_confirmed !== true) {
+        const current = controller.get(args.id)
+        if (args.permission_preset !== undefined && args.permission_preset !== current.security.permissionPreset && args.permission_confirmed !== true) {
           throw new Error('Explicit user confirmation is required to change permissions.')
         }
-        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined && args.permission_preset === undefined) {
+        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined && args.permission_preset === undefined && args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.skills === undefined) {
           throw new Error('Supply at least one field to update.')
         }
         const task = await controller.update(args.id, {
@@ -226,6 +288,15 @@ export function registerAutomationTools(
           ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
           ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
           ...(args.permission_preset === undefined ? {} : { permissionPreset: args.permission_preset }),
+          ...(args.permission_preset === undefined || args.permission_confirmed !== true ? {} : { permissionChangeConfirmed: true as const }),
+          ...((args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.skills === undefined) ? {} : {
+            execution: {
+              ...(args.agent_preset === undefined ? {} : { agentPreset: args.agent_preset }),
+              ...(args.provider === undefined ? {} : { provider: args.provider }),
+              ...(args.model === undefined ? {} : { model: args.model }),
+              ...(args.skills === undefined ? {} : { skills: args.skills }),
+            },
+          }),
         })
         return { ok: true as const, id: task.id, status: task.status, message: `Updated ${task.id}; next run ${task.nextRunAt}; permission ${task.security.permissionPreset}.` }
       } catch (error) {

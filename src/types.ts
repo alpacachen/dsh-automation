@@ -29,9 +29,10 @@ export const AutomationExecutionSchema = z.strictObject({
   agentPreset: z.string().min(1).optional(),
   provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  skills: z.array(z.string().min(1)).default([]),
 })
 
-export const AutomationPermissionPresetSchema = z.enum(['read-only', 'danger-full-access'])
+export const AutomationPermissionPresetSchema = z.string().trim().min(1)
 
 export const AutomationSecuritySchema = z.strictObject({
   permissionPreset: AutomationPermissionPresetSchema,
@@ -111,10 +112,53 @@ export interface UpdateAutomationRequest {
   readonly notificationPolicy?: NotificationPolicy
   readonly pauseAfterConsecutiveFailures?: boolean
   readonly permissionPreset?: AutomationPermissionPreset
+  readonly permissionChangeConfirmed?: true
+  readonly execution?: AutomationExecutionPatch
+}
+
+export interface AutomationExecutionPatch {
+  readonly agentPreset?: string | null
+  readonly provider?: string | null
+  readonly model?: string | null
+  readonly skills?: readonly string[]
+}
+
+export interface AgentConfigurationOptions {
+  readonly presets: readonly {
+    readonly id: string
+    readonly name: string
+    readonly description?: string
+    readonly trust: 'system' | 'user'
+    readonly broken?: string
+    readonly default: boolean
+  }[]
+  readonly models: readonly {
+    readonly provider: string
+    readonly name: string
+    readonly models: readonly { readonly id: string; readonly name: string; readonly description?: string }[]
+  }[]
+  readonly modelFailures: readonly { readonly provider: string; readonly error: string }[]
+  readonly permissions: readonly {
+    readonly id: string
+    readonly name: string
+    readonly description?: string
+    readonly sandbox: string
+    readonly approval: 'ask' | 'never'
+    readonly default: boolean
+  }[]
+  readonly skills: readonly {
+    readonly name: string
+    readonly description: string
+    readonly whenToUse?: string
+    readonly modelInvocable: boolean
+    readonly source: string
+    readonly provider: string
+  }[]
 }
 
 export interface AutomationTaskView extends AutomationTask {
   readonly running: boolean
+  readonly permissionDisplayName?: string
 }
 
 export interface ResumeOptions {

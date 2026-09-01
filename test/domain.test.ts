@@ -46,6 +46,7 @@ test('older tasks load with safe notification defaults and unchanged full access
   delete legacy.pauseAfterConsecutiveFailures
   delete legacy.consecutiveFailures
   delete legacy.unreadNotifications
+  delete (legacy.execution as Record<string, unknown>).skills
   const parsed = AutomationTaskSchema.parse(legacy)
   assert.equal(parsed.notificationPolicy, 'failures')
   assert.equal(parsed.pauseAfterConsecutiveFailures, false)
@@ -53,6 +54,52 @@ test('older tasks load with safe notification defaults and unchanged full access
   assert.equal(parsed.unreadNotifications, 0)
   assert.equal(parsed.security.permissionPreset, 'danger-full-access')
   assert.equal(parsed.security.source, 'plugin-default')
+  assert.deepEqual(parsed.execution.skills, [])
+})
+
+test('execution updates set and clear overrides, replace ordered skills, and preserve paused state', async (t) => {
+  const { domain } = await setup(t)
+  const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))
+  await domain.pause(task.id, Date.parse('2026-03-20T01:00:00.000Z'))
+  const updated = await domain.update(task.id, {
+    execution: { agentPreset: 'focused', provider: 'new-provider', model: 'new-model', skills: [' second ', 'first'] },
+  }, Date.parse('2026-03-20T02:00:00.000Z'))
+  assert.deepEqual(updated.execution, {
+    workspaceId: 'workspace-test', cwd: '/tmp/test-workspace', agentPreset: 'focused', provider: 'new-provider', model: 'new-model', skills: ['second', 'first'],
+  })
+  assert.equal(updated.status, 'paused')
+  assert.equal(updated.nextRunAt, null)
+  assert.equal(updated.pausedNextRunAt, task.nextRunAt)
+  assert.equal(updated.security.grantedAt, task.security.grantedAt)
+  const cleared = await domain.update(task.id, { execution: { agentPreset: null, provider: null, model: null, skills: [] } }, Date.parse('2026-03-20T03:00:00.000Z'))
+  assert.deepEqual(cleared.execution, { workspaceId: 'workspace-test', cwd: '/tmp/test-workspace', skills: [] })
+  await assert.rejects(() => domain.update(task.id, { execution: { provider: 'only' } }, Date.now()), /set or cleared together/)
+  await assert.rejects(() => domain.update(task.id, { execution: { skills: ['same', ' same '] } }, Date.now()), /unique/)
+})
+
+test('update validation is serialized with the state it validates', async (t) => {
+  const { domain } = await setup(t)
+  const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))
+  let releaseFirst!: () => void
+  let markFirstEntered!: () => void
+  const firstEntered = new Promise<void>((resolve) => { markFirstEntered = resolve })
+  const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve })
+
+  const first = domain.update(task.id, { execution: { agentPreset: 'focused' } }, Date.parse('2026-03-20T01:00:00.000Z'), async () => {
+    markFirstEntered()
+    await firstBlocked
+  })
+  await firstEntered
+
+  let secondValidatedPreset: string | undefined
+  const second = domain.update(task.id, { execution: { skills: ['report'] } }, Date.parse('2026-03-20T02:00:00.000Z'), async (current) => {
+    secondValidatedPreset = current.execution.agentPreset
+  })
+  releaseFirst()
+  await Promise.all([first, second])
+
+  assert.equal(secondValidatedPreset, 'focused')
+  assert.deepEqual(domain.get(task.id).execution.skills, ['report'])
 })
 
 test('update replaces requested fields and preserves paused state', async (t) => {

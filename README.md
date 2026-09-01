@@ -22,7 +22,8 @@ Run one-time or recurring tasks. Every run opens a fresh, visible DSH session.
 - 🗓️ **Schedule precisely** — one-time instants, RFC 5545 recurrence, and IANA time zones.
 - 🧼 **Start fresh** — every run uses a new session with no previous chat history.
 - 👀 **Stay informed** — see result summaries, duration, errors, history, and session links in one place.
-- 🛡️ **Limit access** — choose DSH's read-only or full-access permission preset for each task.
+- 🛡️ **Limit access** — choose any permission preset advertised by the DSH Host for each task.
+- 🤖 **Choose execution** — optionally pin an Agent preset, provider/model pair, and ordered skills.
 - 🧭 **Start with guidance** — use outcome-focused templates or a guided creation conversation.
 - 🎛️ **Stay in control** — edit, run, pause, resume, or delete tasks from the UI.
 
@@ -48,7 +49,7 @@ Or:
 
 After creation, open **Automations** in the sidebar to manage the task.
 
-Use **New automation** at any time for a guided setup, or choose a result-focused template in the empty state. Before creation, the Agent previews the name, schedule and time zone, workspace, permission, notifications, and failure-pause policy, then waits for confirmation. Existing tasks keep their saved permission when upgrading.
+Use **New automation** at any time for a guided setup, or choose a result-focused template in the empty state. Before creation, the Agent previews the name, schedule and time zone, workspace, Agent preset, provider/model, selected skills, exact Host permission, notifications, and failure-pause policy, then waits for confirmation.
 
 ## 🎛️ Manage and edit
 
@@ -58,7 +59,8 @@ Each task card lets you:
 - run now, pause, resume, or resume and run;
 - open the latest session or any recent run;
 - choose failure-only, every-completion, or no sidebar notifications;
-- see or change the permission for future runs; permission changes require confirmation;
+- choose a saved Agent preset, provider/model pair, and ordered skills, or follow Host defaults;
+- see or change any Host permission preset for future runs; actual permission changes require confirmation;
 - retry failed runs and optionally pause after three consecutive failures;
 - delete future scheduling while keeping existing sessions.
 
@@ -93,6 +95,9 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 - DSH must be running when work is due; after restart, only the latest missed occurrence runs.
 - Transient scheduler failures retry automatically with bounded exponential backoff.
 - Paused occurrences are skipped; **Resume & run** does not move the original schedule.
+- Selected skill names load their current definitions before every run. A removed/broken preset, model, skill, or permission fails the run instead of falling back.
+- Permission presets with `approval: ask` remain interactive: unattended runs never auto-approve and may wait until the run timeout.
+- Existing state stays at version 1. Older tasks are normalized in memory without a startup rewrite and retain their saved execution and permission settings.
 
 ## 🗓️ Schedule formats
 
@@ -110,8 +115,9 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 
 | Tool | Purpose |
 | --- | --- |
-| `automation_create` | Create a task after confirming its permission and policies |
-| `automation_update` | Change its settings; permission changes require confirmation |
+| `automation_options` | List current Host Agent, model, skill, and permission options |
+| `automation_create` | Create after confirming optional `agent_preset`, `provider`/`model`, ordered `skills`, permission, and policies |
+| `automation_update` | Set or clear execution overrides and replace skills; permission changes require confirmation |
 | `automation_list` | List tasks and current run state |
 | `automation_run` | Queue one immediate run without changing the schedule |
 | `automation_pause` | Pause future scheduling |
