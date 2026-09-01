@@ -8,6 +8,7 @@ Run one-time or recurring tasks. Every run opens a fresh, visible DSH session.
 
 [![npm version](https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm)](https://www.npmjs.com/package/@alpacachen/dsh-automation)
 ![DeepSeek Harness Plugin](https://img.shields.io/badge/DeepSeek%20Harness-Plugin-7c5cff)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-22c55e)
 
@@ -99,6 +100,7 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 | `automation_create` | Create a one-time or recurring task |
 | `automation_update` | Change its name, prompt, or schedule |
 | `automation_list` | List tasks and current run state |
+| `automation_run` | Queue one immediate run without changing the schedule |
 | `automation_pause` | Pause future scheduling |
 | `automation_resume` | Resume, optionally with one immediate run |
 | `automation_delete` | Delete the task and cancel future scheduling |

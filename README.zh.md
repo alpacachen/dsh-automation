@@ -8,6 +8,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm)](https://www.npmjs.com/package/@alpacachen/dsh-automation)
 ![DeepSeek Harness Plugin](https://img.shields.io/badge/DeepSeek%20Harness-Plugin-7c5cff)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![CI](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-22c55e)
 
@@ -99,6 +100,7 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 | `automation_create` | 创建单次或周期任务 |
 | `automation_update` | 修改名称、提示词或计划 |
 | `automation_list` | 查看任务与运行状态 |
+| `automation_run` | 立即运行一次，不改变原计划 |
 | `automation_pause` | 暂停未来调度 |
 | `automation_resume` | 恢复任务，可选择立即运行一次 |
 | `automation_delete` | 删除任务并取消未来调度 |
