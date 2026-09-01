@@ -23,6 +23,7 @@ Run one-time or recurring tasks. Every run opens a fresh, visible DSH session.
 - 🧼 **Start fresh** — every run uses a new session with no previous chat history.
 - 👀 **Stay informed** — see result summaries, duration, errors, history, and session links in one place.
 - 🛡️ **Limit access** — choose DSH's read-only or full-access permission preset for each task.
+- 🧭 **Start with guidance** — use outcome-focused templates or a guided creation conversation.
 - 🎛️ **Stay in control** — edit, run, pause, resume, or delete tasks from the UI.
 
 ## 🚀 Quick start
@@ -47,7 +48,7 @@ Or:
 
 After creation, open **Automations** in the sidebar to manage the task.
 
-The Agent shows the selected permission and asks you to confirm it before creation. Existing tasks keep their saved permission when upgrading.
+Use **New automation** at any time for a guided setup, or choose a result-focused template in the empty state. Before creation, the Agent previews the name, schedule and time zone, workspace, permission, notifications, and failure-pause policy, then waits for confirmation. Existing tasks keep their saved permission when upgrading.
 
 ## 🎛️ Manage and edit
 
@@ -126,6 +127,8 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 > “Resume the daily handoff and run it once now.”
 
 > “List all automations and pause the dependency check.”
+
+The built-in release readiness, dependency watch, and daily handoff templates remain editable drafts; selecting one never sends it automatically.
 
 ## License
 

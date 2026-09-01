@@ -140,7 +140,7 @@ export function registerAutomationTools(
 
   disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_create',
-    description: 'Create one durable unattended automation. Every run starts a fresh visible session. Before calling, show the user the selected permission preset and get explicit confirmation; set permission_confirmed only after they confirm. Use read-only for inspection/reporting that must not modify files, or danger-full-access for tasks that need unrestricted writes. Supply either once_at, or rrule + time_zone + start_at. Ask for a notification policy when the user intent is ambiguous; otherwise default to failures.',
+    description: 'Create one durable unattended automation. Every run starts a fresh visible session. Before calling, show one concise preview with name, schedule and time zone, current workspace, permission, notification policy, and failure-pause policy; wait for explicit user confirmation, then set creation_confirmed to true. Use read-only for inspection/reporting that must not modify files, or danger-full-access for tasks that need unrestricted writes. Supply either once_at, or rrule + time_zone + start_at. Ask for a notification policy when the user intent is ambiguous; otherwise default to failures.',
     parameters: {
       name: { type: 'string', required: true, description: 'Short task name.' },
       prompt: { type: 'string', required: true, description: 'Self-contained prompt for every fresh run session.' },
@@ -151,13 +151,13 @@ export function registerAutomationTools(
       notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Sidebar notification policy. Defaults to failures.' },
       pause_after_failures: { type: 'boolean', description: 'Pause future scheduling after 3 consecutive failed or timed-out runs.' },
       permission_preset: { type: 'string', required: true, enum: ['read-only', 'danger-full-access'], description: 'Confirmed permission for every run. Prefer read-only when no file changes are needed.' },
-      permission_confirmed: { type: 'boolean', required: true, description: 'Must be true only after the user explicitly confirms the displayed permission.' },
+      creation_confirmed: { type: 'boolean', required: true, description: 'Must be true only after the user explicitly confirms the complete creation preview.' },
     },
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
         if (exec.agent !== agent) throw new Error('automation_create must run in its owning agent scope.')
-        if (args.permission_confirmed !== true) throw new Error('Explicit user confirmation of the permission preset is required.')
+        if (args.creation_confirmed !== true) throw new Error('Explicit user confirmation of the complete creation preview is required.')
         const cwd = agent.session.header.cwd
         if (cwd === undefined) throw new Error('The current session has no workspace directory.')
         const workspace = await rootCtx.workspaceRegistry.create(cwd)
