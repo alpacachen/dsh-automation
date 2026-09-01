@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { AutomationDomain, AutomationDomainError } from '../src/domain.js'
 import { AutomationStore } from '../src/store.js'
+import { AutomationTaskSchema } from '../src/types.js'
 import { createRequest, temporaryDirectory } from './helpers.js'
 
 async function setup(t: test.TestContext, maxHistory = 20) {
@@ -31,7 +32,24 @@ test('create trims input and stores execution and full-access audit state', asyn
   assert.equal(task.prompt, 'Review the project.')
   assert.equal(task.nextRunAt, '2026-03-20T09:00:00.000Z')
   assert.equal(task.security.permissionPreset, 'danger-full-access')
+  assert.equal(task.notificationPolicy, 'failures')
+  assert.equal(task.pauseAfterConsecutiveFailures, false)
   assert.deepEqual(domain.list().map((entry) => entry.id), [task.id])
+})
+
+test('v0.3.6 tasks load with safe notification defaults', async (t) => {
+  const { domain } = await setup(t)
+  const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))
+  const legacy: Record<string, unknown> = { ...task }
+  delete legacy.notificationPolicy
+  delete legacy.pauseAfterConsecutiveFailures
+  delete legacy.consecutiveFailures
+  delete legacy.unreadNotifications
+  const parsed = AutomationTaskSchema.parse(legacy)
+  assert.equal(parsed.notificationPolicy, 'failures')
+  assert.equal(parsed.pauseAfterConsecutiveFailures, false)
+  assert.equal(parsed.consecutiveFailures, 0)
+  assert.equal(parsed.unreadNotifications, 0)
 })
 
 test('update replaces requested fields and preserves paused state', async (t) => {
@@ -41,11 +59,15 @@ test('update replaces requested fields and preserves paused state', async (t) =>
     name: ' Release check ',
     prompt: ' Check the release. ',
     schedule: { kind: 'once', fireAt: '2026-03-22T10:00:00.000Z' },
+    notificationPolicy: 'always',
+    pauseAfterConsecutiveFailures: true,
   }, Date.parse('2026-03-20T01:00:00.000Z'))
   assert.equal(updated.name, 'Release check')
   assert.equal(updated.prompt, 'Check the release.')
   assert.equal(updated.status, 'active')
   assert.equal(updated.nextRunAt, '2026-03-22T10:00:00.000Z')
+  assert.equal(updated.notificationPolicy, 'always')
+  assert.equal(updated.pauseAfterConsecutiveFailures, true)
 
   await domain.pause(task.id, Date.parse('2026-03-20T02:00:00.000Z'))
   const paused = await domain.update(task.id, { schedule: daily }, Date.parse('2026-03-20T03:00:00.000Z'))
@@ -53,6 +75,50 @@ test('update replaces requested fields and preserves paused state', async (t) =>
   assert.equal(paused.nextRunAt, null)
   assert.equal(paused.pausedNextRunAt, '2026-03-20T09:00:00.000Z')
   await assert.rejects(() => domain.update(task.id, {}, Date.now()), /at least one field/)
+})
+
+test('notification policy tracks failures, resets on success, and auto-pauses after three', async (t) => {
+  const { domain } = await setup(t)
+  const start = Date.parse('2026-03-20T00:00:00.000Z')
+  const task = await domain.create({
+    ...createRequest(daily),
+    notificationPolicy: 'failures',
+    pauseAfterConsecutiveFailures: true,
+  }, start)
+  let minute = 1
+  const finish = async (status: 'succeeded' | 'failed') => {
+    const queued = await domain.runNow(task.id, start + minute++ * 60_000)
+    await domain.takeNextQueued(start + minute++ * 60_000)
+    await domain.finishRun(task.id, queued.id, { status }, start + minute++ * 60_000)
+  }
+
+  await finish('failed')
+  assert.equal(domain.get(task.id).consecutiveFailures, 1)
+  assert.equal(domain.get(task.id).unreadNotifications, 1)
+  await domain.markNotificationsRead()
+  await finish('succeeded')
+  assert.equal(domain.get(task.id).consecutiveFailures, 0)
+  assert.equal(domain.get(task.id).unreadNotifications, 0)
+
+  await domain.update(task.id, { notificationPolicy: 'never' }, start + minute++ * 60_000)
+  await finish('failed')
+  assert.equal(domain.get(task.id).unreadNotifications, 0)
+  await finish('succeeded')
+  await domain.update(task.id, { notificationPolicy: 'always' }, start + minute++ * 60_000)
+  await finish('succeeded')
+  assert.equal(domain.get(task.id).unreadNotifications, 1)
+  await domain.markNotificationsRead()
+
+  await domain.update(task.id, { notificationPolicy: 'failures' }, start + minute++ * 60_000)
+  await finish('failed')
+  await finish('failed')
+  await finish('failed')
+  const paused = domain.get(task.id)
+  assert.equal(paused.consecutiveFailures, 3)
+  assert.equal(paused.unreadNotifications, 3)
+  assert.equal(paused.status, 'paused')
+  assert.equal(paused.nextRunAt, null)
+  assert.equal(paused.pausedNextRunAt, '2026-03-20T09:00:00.000Z')
 })
 
 test('misfire latest-once creates one run and advances recurring anchor', async (t) => {
@@ -171,6 +237,7 @@ test('restart marks running work outcome unknown but leaves queued work recovera
   assert.equal(restoredRun?.status, 'outcome_unknown')
   assert.match(restoredRun?.sessionId ?? '', /^automation-/)
   assert.match(restoredRun?.error ?? '', /may have completed/)
+  assert.equal(restored.get(runningTask.id).unreadNotifications, 1)
   assert.equal(restored.get(queuedTask.id).runs.at(-1)?.status, 'queued')
 })
 

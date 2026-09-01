@@ -53,6 +53,8 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 - 修改名称、执行提示词和计划；
 - 立即运行、暂停、恢复或恢复并运行；
 - 打开最近会话和历史运行；
+- 选择仅失败、每次完成或不显示侧边栏通知；
+- 重试失败运行，并可在连续失败 3 次后自动暂停；
 - 删除未来计划，同时保留已有会话。
 
 ![自动化任务列表、运行状态与快捷操作](docs/screenshots/automation-list.png)
@@ -81,6 +83,8 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 - 每次运行默认最多一小时；可通过插件配置 `maxRunDurationMs` 调整。
 - 排队中或运行中的工作可以停止，且不会改变后续计划。
 - 意外重启时仍在执行的运行会标为**结果未知**，不会误报失败或自动重试。
+- 需要关注的结果会在侧边栏「自动化任务」入口显示持久化未读标记。
+- 成功运行会清零连续失败次数；任务可选择在连续失败或超时 3 次后自动暂停。
 - DSH 必须在计划到期时运行；重启后只补跑最近错过的一次。
 - 调度器遇到临时故障时会按有上限的指数退避自动重试。
 - 暂停期间的周期会被跳过；「恢复并运行」不会改变原计划。
@@ -101,8 +105,8 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 
 | 工具 | 用途 |
 | --- | --- |
-| `automation_create` | 创建单次或周期任务 |
-| `automation_update` | 修改名称、提示词或计划 |
+| `automation_create` | 创建任务并设置通知及失败暂停策略 |
+| `automation_update` | 修改名称、提示词、计划或恢复策略 |
 | `automation_list` | 查看任务与运行状态 |
 | `automation_run` | 立即运行一次，不改变原计划 |
 | `automation_pause` | 暂停未来调度 |

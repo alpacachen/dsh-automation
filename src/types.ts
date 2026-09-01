@@ -37,6 +37,8 @@ export const AutomationSecuritySchema = z.strictObject({
   grantedAt: Instant,
 })
 
+export const NotificationPolicySchema = z.enum(['failures', 'always', 'never'])
+
 export const AutomationRunSchema = z.strictObject({
   id: z.string().min(1),
   trigger: z.enum(['scheduled', 'manual']),
@@ -61,6 +63,10 @@ export const AutomationTaskSchema = z.strictObject({
   nextRunAt: Instant.nullable(),
   pausedAt: Instant.optional(),
   pausedNextRunAt: Instant.optional(),
+  notificationPolicy: NotificationPolicySchema.default('failures'),
+  pauseAfterConsecutiveFailures: z.boolean().default(false),
+  consecutiveFailures: z.number().int().nonnegative().default(0),
+  unreadNotifications: z.number().int().nonnegative().default(0),
   execution: AutomationExecutionSchema,
   security: AutomationSecuritySchema,
   runs: z.array(AutomationRunSchema),
@@ -77,6 +83,7 @@ export type RecurringSchedule = z.infer<typeof RecurringScheduleSchema>
 export type AutomationSchedule = z.infer<typeof AutomationScheduleSchema>
 export type AutomationExecution = z.infer<typeof AutomationExecutionSchema>
 export type AutomationSecurity = z.infer<typeof AutomationSecuritySchema>
+export type NotificationPolicy = z.infer<typeof NotificationPolicySchema>
 export type AutomationRun = z.infer<typeof AutomationRunSchema>
 export type AutomationTask = z.infer<typeof AutomationTaskSchema>
 export type AutomationState = z.infer<typeof AutomationStateSchema>
@@ -89,12 +96,16 @@ export interface CreateAutomationRequest {
   readonly schedule: AutomationSchedule
   readonly execution: AutomationExecution
   readonly createdBySessionId: string
+  readonly notificationPolicy?: NotificationPolicy
+  readonly pauseAfterConsecutiveFailures?: boolean
 }
 
 export interface UpdateAutomationRequest {
   readonly name?: string
   readonly prompt?: string
   readonly schedule?: AutomationSchedule
+  readonly notificationPolicy?: NotificationPolicy
+  readonly pauseAfterConsecutiveFailures?: boolean
 }
 
 export interface AutomationTaskView extends AutomationTask {

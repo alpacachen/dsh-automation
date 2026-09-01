@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from './controller.js'
-import { AutomationScheduleSchema, type UpdateAutomationRequest } from './types.js'
+import { AutomationScheduleSchema, NotificationPolicySchema, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
 
@@ -45,16 +45,22 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 function parseUpdate(body: Record<string, unknown>): UpdateAutomationRequest {
-  if (Object.keys(body).some((key) => key !== 'name' && key !== 'prompt' && key !== 'schedule')) {
+  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures'].includes(key))) {
     throw new Error('Update body contains an unknown field.')
   }
   if (body.name !== undefined && typeof body.name !== 'string') throw new Error('name must be a string.')
   if (body.prompt !== undefined && typeof body.prompt !== 'string') throw new Error('prompt must be a string.')
+  if (body.pauseAfterConsecutiveFailures !== undefined && typeof body.pauseAfterConsecutiveFailures !== 'boolean') {
+    throw new Error('pauseAfterConsecutiveFailures must be boolean.')
+  }
   const schedule = body.schedule === undefined ? undefined : AutomationScheduleSchema.parse(body.schedule)
+  const notificationPolicy = body.notificationPolicy === undefined ? undefined : NotificationPolicySchema.parse(body.notificationPolicy)
   return {
     ...(body.name === undefined ? {} : { name: body.name as string }),
     ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
     ...(schedule === undefined ? {} : { schedule }),
+    ...(notificationPolicy === undefined ? {} : { notificationPolicy }),
+    ...(body.pauseAfterConsecutiveFailures === undefined ? {} : { pauseAfterConsecutiveFailures: body.pauseAfterConsecutiveFailures as boolean }),
   }
 }
 
@@ -74,6 +80,11 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
       const url = new URL(req.url ?? API_ROOT, 'http://localhost')
       const suffix = url.pathname.slice(API_ROOT.length)
       try {
+        if (req.method === 'POST' && suffix === '/notifications/read') {
+          await controller.markNotificationsRead()
+          send(res, 200, { read: true })
+          return
+        }
         if (req.method === 'GET' && (suffix === '' || suffix === '/tasks')) {
           send(res, 200, { tasks: controller.list(), scheduler: controller.schedulerHealth() })
           return
