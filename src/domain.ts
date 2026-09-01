@@ -33,6 +33,7 @@ export interface ClaimedRun {
 export interface RunOutcome {
   readonly status: 'succeeded' | 'failed' | 'interrupted' | 'timed_out' | 'canceled'
   readonly sessionId?: string
+  readonly summary?: string
   readonly error?: string
 }
 
@@ -73,9 +74,9 @@ export class AutomationDomain {
       for (const task of Object.values(state.tasks)) {
         for (const run of task.runs) {
           if (run.status !== 'running') continue
-          run.status = 'interrupted'
+          run.status = 'outcome_unknown'
           run.finishedAt = instant(now)
-          run.error = 'DSH stopped while this automation run was active.'
+          run.error = 'DSH restarted before this automation run reported its outcome; it may have completed.'
         }
         pruneRuns(task, this.maxRunHistory)
       }
@@ -310,6 +311,7 @@ export class AutomationDomain {
       if (task === undefined || run === undefined || run.status !== 'queued') return undefined
       run.status = 'running'
       run.startedAt = instant(now)
+      run.sessionId ??= `automation-${randomUUID()}`
       return { task: structuredClone(task), run: structuredClone(run) }
     })
   }
@@ -324,6 +326,7 @@ export class AutomationDomain {
       run.status = outcome.status
       run.finishedAt = instant(now)
       if (outcome.sessionId !== undefined) run.sessionId = outcome.sessionId
+      if (outcome.summary !== undefined) run.summary = outcome.summary
       if (outcome.error !== undefined) run.error = outcome.error
       pruneRuns(current, this.maxRunHistory)
     })

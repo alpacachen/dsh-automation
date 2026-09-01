@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
+import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { DshAutomationRunner } from '../src/runner.js'
 import type { AutomationRun, AutomationTask } from '../src/types.js'
 
@@ -37,7 +38,10 @@ const run: AutomationRun = {
   status: 'running',
 }
 
-function fakeContext(reason: { kind: string; error?: { message: string } } = { kind: 'completed' }) {
+function fakeContext(
+  reason: { kind: string; error?: { message: string } } = { kind: 'completed' },
+  assistantText?: string,
+) {
   const order: string[] = []
   const messages: unknown[] = []
   const createdIds: string[] = []
@@ -76,7 +80,22 @@ function fakeContext(reason: { kind: string; error?: { message: string } } = { k
             followup(message: unknown) {
               order.push('followup')
               messages.push(message)
-              events.push({ type: 'turn/end', seq: 1, time: Date.now(), data: { turn: 1, reason } })
+              if (assistantText !== undefined) {
+                events.push({
+                  type: 'assistant/message',
+                  seq: 1,
+                  time: Date.now(),
+                  data: {
+                    turn: 1,
+                    step: 1,
+                    message: createAssistantMessage({
+                      content: [{ type: 'text', text: assistantText }],
+                      source: { provider: 'test', model: 'test' },
+                    }),
+                  },
+                })
+              }
+              events.push({ type: 'turn/end', seq: 2, time: Date.now(), data: { turn: 1, reason } })
             },
             async whenIdle() { order.push('idle') },
           },
@@ -109,6 +128,24 @@ test('each invocation uses a different session id', async () => {
   const second = await runner.run(task, { ...run, id: 'run-second' })
   assert.notEqual(first.sessionId, second.sessionId)
   assert.equal(fake.disposed(), 0)
+})
+
+test('runner reuses the session id persisted when the run was claimed', async () => {
+  const fake = fakeContext()
+  const result = await new DshAutomationRunner(fake.ctx, 'danger-full-access').run(task, {
+    ...run,
+    sessionId: 'automation-persisted',
+  })
+  assert.equal(result.sessionId, 'automation-persisted')
+  assert.deepEqual(fake.createdIds, ['automation-persisted'])
+})
+
+test('runner stores a bounded summary from the final assistant message', async () => {
+  const fake = fakeContext({ kind: 'completed' }, `  Finished\n\n${'x'.repeat(600)}  `)
+  const result = await new DshAutomationRunner(fake.ctx, 'danger-full-access').run(task, run)
+  assert.match(result.summary ?? '', /^Finished x+/)
+  assert.equal([...(result.summary ?? '')].length, 500)
+  assert.ok(result.summary?.endsWith('…'))
 })
 
 test('non-completed turn is reported as failed while preserving its session id', async () => {

@@ -141,17 +141,19 @@ test('queued run is claimed, completed, and persisted with session id', async (t
   const claimed = await domain.takeNextQueued(Date.parse('2026-03-20T01:01:00.000Z'))
   assert.equal(claimed?.run.id, queued.id)
   assert.equal(claimed?.run.status, 'running')
-  await domain.finishRun(task.id, queued.id, { status: 'succeeded', sessionId: 'session-run' }, Date.parse('2026-03-20T01:02:00.000Z'))
+  assert.match(claimed?.run.sessionId ?? '', /^automation-/)
+  await domain.finishRun(task.id, queued.id, { status: 'succeeded', sessionId: 'session-run', summary: 'Review complete.' }, Date.parse('2026-03-20T01:02:00.000Z'))
   assert.deepEqual(domain.get(task.id).runs.at(-1), {
     ...queued,
     status: 'succeeded',
     startedAt: '2026-03-20T01:01:00.000Z',
     finishedAt: '2026-03-20T01:02:00.000Z',
     sessionId: 'session-run',
+    summary: 'Review complete.',
   })
 })
 
-test('restart marks running work interrupted but leaves queued work recoverable', async (t) => {
+test('restart marks running work outcome unknown but leaves queued work recoverable', async (t) => {
   const directory = await temporaryDirectory()
   t.after(directory.cleanup)
   const path = join(directory.path, 'state.json')
@@ -165,7 +167,10 @@ test('restart marks running work interrupted but leaves queued work recoverable'
 
   const restored = new AutomationDomain(new AutomationStore(path))
   await restored.init(Date.parse('2026-03-20T02:00:00.000Z'))
-  assert.equal(restored.get(runningTask.id).runs.at(-1)?.status, 'interrupted')
+  const restoredRun = restored.get(runningTask.id).runs.at(-1)
+  assert.equal(restoredRun?.status, 'outcome_unknown')
+  assert.match(restoredRun?.sessionId ?? '', /^automation-/)
+  assert.match(restoredRun?.error ?? '', /may have completed/)
   assert.equal(restored.get(queuedTask.id).runs.at(-1)?.status, 'queued')
 })
 

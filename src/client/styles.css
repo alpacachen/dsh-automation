@@ -924,8 +924,22 @@
 }
 
 .automation-run-dot.is-paused,
+.automation-run-dot.is-outcome_unknown,
 .automation-run-dot.is-canceled {
   color: var(--dsw-alias-state-warn-primary);
+}
+
+.automation-latest-result {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+
+.automation-latest-result b {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
 }
 
 .automation-run-copy {
@@ -953,11 +967,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+.automation-run-summary,
 .automation-run-error {
   margin-top: 4px !important;
-  color: var(--dsw-alias-state-error-primary);
   font: var(--dsw-font-xxxs-11);
   overflow-wrap: anywhere;
+}
+
+.automation-run-summary {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.automation-run-error {
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .automation-spin {

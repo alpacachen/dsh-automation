@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AutomationStore, writeJsonAtomic } from '../src/store.js'
+import { AutomationRunSchema } from '../src/types.js'
 import { temporaryDirectory } from './helpers.js'
 
 test('missing state starts empty and survives atomic reopen', async (t) => {
@@ -20,6 +21,18 @@ test('missing state starts empty and survives atomic reopen', async (t) => {
   await reopened.init()
   assert.deepEqual(reopened.snapshot(), store.snapshot())
   assert.equal(JSON.parse(await readFile(path, 'utf8')).version, 1)
+})
+
+test('run records from v0.3.5 remain valid without a summary', () => {
+  const run = {
+    id: 'run-old',
+    trigger: 'manual' as const,
+    enqueuedAt: '2026-03-20T00:00:00.000Z',
+    finishedAt: '2026-03-20T00:01:00.000Z',
+    status: 'interrupted' as const,
+    error: 'DSH stopped while this automation run was active.',
+  }
+  assert.deepEqual(AutomationRunSchema.parse(run), run)
 })
 
 test('corrupt JSON and unsupported state versions fail closed without overwrite', async (t) => {

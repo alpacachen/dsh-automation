@@ -144,6 +144,20 @@ function formatDate(value: string, locale: string): string {
   return new Date(value).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+function formatRunDuration(startedAt: string | undefined, finishedAt: string | undefined, locale: string): string | undefined {
+  if (startedAt === undefined || finishedAt === undefined) return undefined
+  let seconds = Math.max(0, Math.round((Date.parse(finishedAt) - Date.parse(startedAt)) / 1_000))
+  const hours = Math.floor(seconds / 3_600)
+  seconds %= 3_600
+  const minutes = Math.floor(seconds / 60)
+  seconds %= 60
+  const format = (value: number, unit: 'hour' | 'minute' | 'second') =>
+    new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value)
+  if (hours > 0) return [format(hours, 'hour'), minutes > 0 && format(minutes, 'minute')].filter(Boolean).join(' ')
+  if (minutes > 0) return [format(minutes, 'minute'), seconds > 0 && format(seconds, 'second')].filter(Boolean).join(' ')
+  return format(seconds, 'second')
+}
+
 function scheduleLabel(task: AutomationTaskView, locale: string, t: typeof translate): string {
   if (task.schedule.kind === 'once') return `${t('once')} · ${formatDate(task.schedule.fireAt, locale)}`
   const rule = parseCommonRRule(task.schedule.rrule)
@@ -172,6 +186,7 @@ function statusLabel(status: string, t: typeof translate): string {
   if (status === 'succeeded') return t('statusSucceeded')
   if (status === 'failed') return t('statusFailed')
   if (status === 'interrupted') return t('statusInterrupted')
+  if (status === 'outcome_unknown') return t('statusOutcomeUnknown')
   if (status === 'timed_out') return t('statusTimedOut')
   if (status === 'canceled') return t('statusCanceled')
   return status
@@ -184,7 +199,7 @@ function triggerLabel(trigger: string, t: typeof translate): string {
 }
 
 function statusClass(status: string): string {
-  return ['active', 'paused', 'completed', 'queued', 'running', 'succeeded', 'failed', 'interrupted', 'timed_out', 'canceled'].includes(status)
+  return ['active', 'paused', 'completed', 'queued', 'running', 'succeeded', 'failed', 'interrupted', 'outcome_unknown', 'timed_out', 'canceled'].includes(status)
     ? `is-${status}`
     : 'is-neutral'
 }
@@ -604,6 +619,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
               const editing = editingTaskId === task.id
               const disabled = busy || pending
               const displayStatus = busy ? 'running' : task.status
+              const latestResult = [...task.runs].reverse().find((run) => run.summary !== undefined)
               const latestSession = [...task.runs].reverse().find((run) => run.sessionId !== undefined)?.sessionId
               return (
                 <article key={task.id} className={`automation-task-card ${statusClass(displayStatus)}`}>
@@ -633,6 +649,13 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                       <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
                     </div>
                   </div>
+
+                  {latestResult?.summary !== undefined && (
+                    <p className="automation-latest-result">
+                      <b>{t('latestResult')}</b>
+                      <span>{latestResult.summary}</span>
+                    </p>
+                  )}
 
                   {editing ? (
                     <EditTaskForm
@@ -723,16 +746,19 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                         <Icon name="chevron" />
                       </summary>
                       <ol>
-                        {[...task.runs].reverse().map((run) => (
-                          <li key={run.id}>
+                        {[...task.runs].reverse().map((run) => {
+                          const duration = formatRunDuration(run.startedAt, run.finishedAt, locale)
+                          return <li key={run.id}>
                             <span className={`automation-run-dot ${statusClass(run.status)}`} />
                             <div className="automation-run-copy">
                               <span className="automation-run-line">
                                 <b>{statusLabel(run.status, t)}</b>
                                 <span>·</span>
                                 <span>{triggerLabel(run.trigger, t)}</span>
+                                {duration !== undefined && <><span>·</span><span>{duration}</span></>}
                               </span>
                               <time dateTime={run.startedAt ?? run.enqueuedAt}>{formatDate(run.startedAt ?? run.enqueuedAt, locale)}</time>
+                              {run.summary !== undefined && <p className="automation-run-summary">{run.summary}</p>}
                               {run.error !== undefined && <p className="automation-run-error">{run.error}</p>}
                             </div>
                             {run.sessionId !== undefined && (
@@ -741,7 +767,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                               </button>
                             )}
                           </li>
-                        ))}
+                        })}
                       </ol>
                     </details>
                   )}

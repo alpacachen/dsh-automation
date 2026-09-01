@@ -16,6 +16,7 @@ export interface Clock {
 export interface AutomationRunnerResult {
   readonly status: 'succeeded' | 'failed'
   readonly sessionId: string
+  readonly summary?: string
   readonly error?: string
 }
 
@@ -197,6 +198,7 @@ export class AutomationScheduler {
           outcome = {
             status: result.status,
             sessionId: result.sessionId,
+            ...(result.summary === undefined ? {} : { summary: result.summary }),
             ...(result.error === undefined ? {} : { error: result.error }),
           }
         } catch (error) {
@@ -208,13 +210,16 @@ export class AutomationScheduler {
           active.cancelTimeout?.()
           active.cancelTimeout = undefined
         }
-        const session = outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }
+        const resultData = {
+          ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
+          ...(outcome.summary === undefined ? {} : { summary: outcome.summary }),
+        }
         if (active.cancelReason === 'timeout') {
-          outcome = { status: 'timed_out', error: `Automation exceeded its ${this.maxRunDurationMs}ms run limit.`, ...session }
+          outcome = { status: 'timed_out', error: `Automation exceeded its ${this.maxRunDurationMs}ms run limit.`, ...resultData }
         } else if (active.cancelReason === 'manual') {
-          outcome = { status: 'canceled', error: 'Automation run was stopped by the user.', ...session }
+          outcome = { status: 'canceled', error: 'Automation run was stopped by the user.', ...resultData }
         } else if (active.cancelReason === 'shutdown') {
-          outcome = { status: 'interrupted', error: 'DSH stopped while this automation run was active.', ...session }
+          outcome = { status: 'interrupted', error: 'DSH stopped while this automation run was active.', ...resultData }
         }
         if (this.activeRun === active) this.activeRun = undefined
         this.pendingFinish = { taskId: claimed.task.id, runId: claimed.run.id, outcome }
