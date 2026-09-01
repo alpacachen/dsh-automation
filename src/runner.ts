@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { AutomationRun, AutomationTask } from './types.js'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -12,6 +12,24 @@ import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-permission-presets'
 import '@deepseek-ai/dsh-session-title'
 import '@deepseek-ai/dsh-workspace'
+
+const RUN_SUMMARY_MAX_CHARS = 500
+
+function finalAssistantSummary(events: readonly SessionEvent[]): string | undefined {
+  const event = [...events].reverse().find((entry) => entry.type === 'assistant/message')
+  if (event?.type !== 'assistant/message') return undefined
+  const summary = event.data.message.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!summary) return undefined
+  const characters = [...summary]
+  return characters.length <= RUN_SUMMARY_MAX_CHARS
+    ? summary
+    : `${characters.slice(0, RUN_SUMMARY_MAX_CHARS - 1).join('')}…`
+}
 
 function titleFor(task: AutomationTask, run: AutomationRun): string {
   const time = run.scheduledAt ?? run.enqueuedAt
@@ -55,7 +73,7 @@ export class DshAutomationRunner implements AutomationRunner {
   async run(task: AutomationTask, run: AutomationRun): Promise<AutomationRunnerResult> {
     const active: { agent?: Agent; cancelReason?: AutomationRunCancelReason } = {}
     this.active.set(run.id, active)
-    const sessionId = SessionId(`automation-${randomUUID()}`)
+    const sessionId = SessionId(run.sessionId ?? `automation-${randomUUID()}`)
     let handle: Awaited<ReturnType<Context['agents']['create']>> | undefined
     let keepSessionLive = false
     try {
@@ -95,15 +113,25 @@ export class DshAutomationRunner implements AutomationRunner {
       await handle.agent.whenIdle()
       await this.ctx.sessions.flush(handle.agent.session)
 
-      const turnEnd = handle.agent.session.events
-        .slice(baseline)
+      const runEvents = handle.agent.session.events.slice(baseline)
+      const summary = finalAssistantSummary(runEvents)
+      const turnEnd = runEvents
         .filter((event) => event.type === 'turn/end')
         .at(-1)
-      let result: AutomationRunnerResult = { status: 'succeeded', sessionId }
+      let result: AutomationRunnerResult = {
+        status: 'succeeded',
+        sessionId,
+        ...(summary === undefined ? {} : { summary }),
+      }
       if (turnEnd?.type === 'turn/end' && turnEnd.data.reason.kind !== 'completed') {
         const reason = turnEnd.data.reason
         const detail = reason.kind === 'error' ? reason.error.message : reason.kind
-        result = { status: 'failed', sessionId, error: `Automation turn ended with ${detail}.` }
+        result = {
+          status: 'failed',
+          sessionId,
+          ...(summary === undefined ? {} : { summary }),
+          error: `Automation turn ended with ${detail}.`,
+        }
       }
       // The owner fiber disposes this handle on plugin shutdown. Disposing it here
       // emits session/removed, so the sidebar drops the new persisted session.

@@ -21,7 +21,7 @@ Run one-time or recurring tasks. Every run opens a fresh, visible DSH session.
 - 🗣️ **Create naturally** — tell an Agent what to do and when.
 - 🗓️ **Schedule precisely** — one-time instants, RFC 5545 recurrence, and IANA time zones.
 - 🧼 **Start fresh** — every run uses a new session with no previous chat history.
-- 👀 **Stay informed** — see status, errors, history, and session links in one place.
+- 👀 **Stay informed** — see result summaries, duration, errors, history, and session links in one place.
 - 🎛️ **Stay in control** — edit, run, pause, resume, or delete tasks from the UI.
 
 ## 🚀 Quick start
@@ -80,6 +80,7 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 - Automations run globally one at a time and never overlap.
 - Runs time out after one hour by default; set `maxRunDurationMs` in plugin config to change the limit.
 - Queued or running work can be stopped without moving its future schedule.
+- A run active during an unexpected restart is marked **outcome unknown** instead of being reported as failed or retried.
 - DSH must be running when work is due; after restart, only the latest missed occurrence runs.
 - Transient scheduler failures retry automatically with bounded exponential backoff.
 - Paused occurrences are skipped; **Resume & run** does not move the original schedule.

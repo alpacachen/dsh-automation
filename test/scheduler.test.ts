@@ -50,7 +50,7 @@ class RecordingRunner implements AutomationRunner {
   cancel(): boolean { return false }
   async run(task: AutomationTask, run: AutomationRun) {
     this.calls.push({ task, run })
-    return { status: 'succeeded' as const, sessionId: `session-${run.id}` }
+    return { status: 'succeeded' as const, sessionId: `session-${run.id}`, summary: `Completed ${task.name}.` }
   }
 }
 
@@ -107,6 +107,7 @@ test('scheduler arms one timer and executes one-time task once', async (t) => {
   await scheduler.whenSettled()
   assert.equal(runner.calls.length, 1)
   assert.equal(domain.get(task.id).runs.at(-1)?.status, 'succeeded')
+  assert.equal(domain.get(task.id).runs.at(-1)?.summary, 'Completed Test automation.')
   await clock.advanceTo(Date.parse('2026-03-21T00:00:00.000Z'))
   assert.equal(runner.calls.length, 1)
   await scheduler.stop()
