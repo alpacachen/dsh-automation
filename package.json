@@ -1,6 +1,6 @@
 {
   "name": "@alpacachen/dsh-automation",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Durable agent-created automations for DeepSeek Harness",
   "repository": {
     "type": "git",
