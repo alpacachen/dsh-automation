@@ -24,6 +24,7 @@ function setup() {
     pauseAfterConsecutiveFailures: false,
     consecutiveFailures: 0,
     unreadNotifications: 0,
+    execution: { workspaceId: 'workspace', cwd: '/tmp/workspace', agentPreset: 'standard', provider: 'provider', model: 'model', skills: [] },
     security: { permissionPreset: 'danger-full-access', source: 'plugin-default', grantedAt: '2026-03-20T00:00:00.000Z' },
     runs: [],
   }
@@ -49,6 +50,7 @@ function setup() {
       calls.push(`update:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}:${request.permissionPreset}`)
       return { ...task, ...request, security: { ...task.security, permissionPreset: request.permissionPreset ?? task.security.permissionPreset } }
     },
+    get: () => task,
     list: () => [{ ...task, running: false }],
     delete: async () => { calls.push('delete'); return true },
     pause: async () => { calls.push('pause'); return { ...task, status: 'paused' } },
@@ -71,13 +73,14 @@ test('registers complete Agent management tool surface and disposes it', async (
     'automation_create',
     'automation_delete',
     'automation_list',
+    'automation_options',
     'automation_pause',
     'automation_resume',
     'automation_run',
     'automation_update',
   ])
   const create = fixture.byName('automation_create')
-  assert.match(create.description, /schedule and time zone, current workspace, permission, notification policy/)
+  assert.match(create.description, /Agent preset, provider\/model, ordered selected skills/)
   const created = await create.execute({
     name: 'Task',
     prompt: 'Do work.',
@@ -103,7 +106,7 @@ test('registers complete Agent management tool surface and disposes it', async (
   await fixture.byName('automation_delete').execute({ id: 'automation-task' }, fixture.exec)
   assert.deepEqual(fixture.calls, ['create:always:true:read-only', 'run', 'update:never:false:read-only', 'pause', 'resume', 'delete'])
   fixture.dispose()
-  assert.equal(fixture.disposed(), 7)
+  assert.equal(fixture.disposed(), 8)
 })
 
 test('create rejects mixed or incomplete schedule selectors and wrong agent scope', async () => {
@@ -131,7 +134,7 @@ test('create rejects mixed or incomplete schedule selectors and wrong agent scop
   const unconfirmed = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z', permission_preset: 'danger-full-access', creation_confirmed: false }, fixture.exec)
   assert.equal(unconfirmed.ok, false)
   assert.match(unconfirmed.error, /confirmation/)
-  const unconfirmedUpdate = await update.execute({ id: 'automation-task', permission_preset: 'danger-full-access' }, fixture.exec)
+  const unconfirmedUpdate = await update.execute({ id: 'automation-task', permission_preset: 'read-only' }, fixture.exec)
   assert.equal(unconfirmedUpdate.ok, false)
   assert.match(unconfirmedUpdate.error, /confirmation/)
   const wrongScope = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z', ...confirmed }, {

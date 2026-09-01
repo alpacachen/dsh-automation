@@ -1,95 +1,84 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createServer, type Server } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from '../src/controller.js'
 import { registerAutomationApi } from '../src/api.js'
 
-async function listen(server: Server): Promise<string> {
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const address = server.address() as AddressInfo
-  return `http://127.0.0.1:${address.port}`
+type Route = { handler: (req: any, res: any) => Promise<void> }
+
+async function invoke(route: Route, method: string, url: string, body?: string, headers: Record<string, string> = {}) {
+  let status = 0
+  let text = ''
+  const req = {
+    method, url, headers: { host: 'localhost', ...headers },
+    async *[Symbol.asyncIterator]() { if (body !== undefined) yield Buffer.from(body) },
+  }
+  const res = { writeHead(value: number) { status = value }, end(value: string) { text = value } }
+  await route.handler(req, res)
+  return { status, value: JSON.parse(text) }
 }
 
-test('HTTP API lists and manages automations with CSRF header enforcement', async (t) => {
-  let route: { handler: (req: any, res: any) => unknown } | undefined
+function setup(controller: AutomationController) {
+  let route: Route | undefined
+  const ctx = { webServer: { register(value: Route) { route = value; return () => { route = undefined } } } } as unknown as Context
+  const dispose = registerAutomationApi(ctx, controller)
+  return { route: () => route!, dispose }
+}
+
+test('HTTP API lists options and manages automations with confirmation and CSRF enforcement', async () => {
   const calls: string[] = []
+  const task = { id: 'task-1', security: { permissionPreset: 'danger-full-access' } }
   const controller = {
-    list: () => [{ id: 'task-1' }],
+    list: () => [task], get: () => task,
     schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
+    options: async (_id: string, preset?: string | null) => ({ preset: preset === null ? 'default' : preset ?? 'saved' }),
     markNotificationsRead: async () => { calls.push('read') },
-    update: async (id: string, request: { name?: string; notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean; permissionPreset?: string }) => {
-      calls.push(`update:${id}:${request.name}:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}:${request.permissionPreset}`)
-      return { id, ...request }
-    },
+    update: async (id: string, request: any) => { calls.push(`update:${id}`); return { id, ...request } },
     runNow: async (id: string) => { calls.push(`run:${id}`); return { id: 'run-1' } },
     stop: async (id: string) => { calls.push(`stop:${id}`); return { runId: 'run-1', status: 'canceling' } },
     pause: async (id: string) => { calls.push(`pause:${id}`); return { id, status: 'paused' } },
     resume: async (id: string, options: { runNow: boolean }) => { calls.push(`resume:${id}:${options.runNow}`); return { id, status: 'active' } },
     delete: async (id: string) => { calls.push(`delete:${id}`); return id === 'task-1' },
   } as unknown as AutomationController
-  const ctx = {
-    webServer: {
-      register(value: typeof route) { route = value; return () => { route = undefined } },
-    },
-  } as unknown as Context
-  const dispose = registerAutomationApi(ctx, controller)
-  const server = createServer((req, res) => { void route!.handler(req, res) })
-  t.after(async () => {
-    dispose()
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-  })
-  const base = await listen(server)
+  const fixture = setup(controller)
+  const route = fixture.route()
 
-  const listed = await fetch(`${base}/api/automation/v1/tasks`)
-  assert.equal(listed.status, 200)
-  assert.deepEqual(await listed.json(), {
-    tasks: [{ id: 'task-1' }],
-    scheduler: { status: 'healthy', consecutiveFailures: 0 },
-  })
-
-  const denied = await fetch(`${base}/api/automation/v1/tasks/task-1/run`, { method: 'POST' })
-  assert.equal(denied.status, 403)
+  assert.deepEqual((await invoke(route, 'GET', '/api/automation/v1/tasks')).value.scheduler, { status: 'healthy', consecutiveFailures: 0 })
+  assert.deepEqual((await invoke(route, 'GET', '/api/automation/v1/tasks/task-1/options?agentPreset=')).value, { options: { preset: 'default' } })
+  assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task-1/run')).status, 403)
 
   const headers = { 'x-dsh-automation': '1', 'content-type': 'application/json' }
-  assert.equal((await fetch(`${base}/api/automation/v1/notifications/read`, { method: 'POST', headers })).status, 200)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1`, { method: 'PATCH', headers, body: '{"name":"Updated","notificationPolicy":"always","pauseAfterConsecutiveFailures":true,"permissionPreset":"read-only","confirmPermissionChange":true}' })).status, 200)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/run`, { method: 'POST', headers })).status, 202)
-  const stopped = await fetch(`${base}/api/automation/v1/tasks/task-1/stop`, { method: 'POST', headers })
-  assert.equal(stopped.status, 202)
-  assert.deepEqual(await stopped.json(), { runId: 'run-1', status: 'canceling' })
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/pause`, { method: 'POST', headers })).status, 200)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/resume`, { method: 'POST', headers, body: '{"runNow":true}' })).status, 200)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1`, { method: 'DELETE', headers })).status, 200)
-  assert.deepEqual(calls, ['read', 'update:task-1:Updated:always:true:read-only', 'run:task-1', 'stop:task-1', 'pause:task-1', 'resume:task-1:true', 'delete:task-1'])
+  assert.equal((await invoke(route, 'POST', '/api/automation/v1/notifications/read', undefined, headers)).status, 200)
+  const update = await invoke(route, 'PATCH', '/api/automation/v1/tasks/task-1', JSON.stringify({
+    name: 'Updated', permissionPreset: 'workspace-safe', confirmPermissionChange: true,
+    execution: { agentPreset: null, provider: null, model: null, skills: ['report'] },
+  }), headers)
+  assert.equal(update.status, 200)
+  assert.deepEqual(update.value.task.execution, { agentPreset: null, provider: null, model: null, skills: ['report'] })
+  assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task-1/run', undefined, headers)).status, 202)
+  assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task-1/stop', undefined, headers)).status, 202)
+  assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task-1/pause', undefined, headers)).status, 200)
+  assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task-1/resume', '{"runNow":true}', headers)).status, 200)
+  assert.equal((await invoke(route, 'DELETE', '/api/automation/v1/tasks/task-1', undefined, headers)).status, 200)
+  assert.deepEqual(calls, ['read', 'update:task-1', 'run:task-1', 'stop:task-1', 'pause:task-1', 'resume:task-1:true', 'delete:task-1'])
+  fixture.dispose()
 })
 
-test('HTTP API rejects cross-origin, invalid bodies, methods and unknown routes', async (t) => {
-  let route: { handler: (req: any, res: any) => unknown } | undefined
-  const ctx = {
-    webServer: { register(value: typeof route) { route = value; return () => undefined } },
-  } as unknown as Context
+test('HTTP API rejects cross-origin, unconfirmed, partial and unknown nested updates', async () => {
   const controller = {
-    list: () => [],
-    schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
-    resume: async () => ({ id: 'task', status: 'active' }),
+    list: () => [], schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
+    get: () => ({ security: { permissionPreset: 'danger-full-access' } }), update: async () => ({}), resume: async () => ({}),
   } as unknown as AutomationController
-  registerAutomationApi(ctx, controller)
-  const server = createServer((req, res) => { void route!.handler(req, res) })
-  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())))
-  const base = await listen(server)
-
-  const crossOrigin = await fetch(`${base}/api/automation/v1/tasks`, { headers: { origin: 'https://evil.example' } })
-  assert.equal(crossOrigin.status, 403)
+  const route = setup(controller).route()
   const headers = { 'x-dsh-automation': '1', 'content-type': 'application/json' }
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task/resume`, { method: 'POST', headers, body: '{"runNow":"yes"}' })).status, 400)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PATCH', headers, body: '{"name":1}' })).status, 400)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PATCH', headers, body: '{"notificationPolicy":"sometimes"}' })).status, 400)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PATCH', headers, body: '{"permissionPreset":"danger-full-access"}' })).status, 400)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PUT', headers })).status, 405)
-  assert.equal((await fetch(`${base}/api/automation/v1/unknown`, { headers })).status, 404)
+  assert.equal((await invoke(route, 'GET', '/api/automation/v1/tasks', undefined, { origin: 'https://evil.example', host: 'localhost' })).status, 403)
+  for (const body of [
+    { name: 1 }, { permissionPreset: 'workspace-safe' }, { execution: {} }, { execution: { provider: 'only' } },
+    { execution: { skills: [1] } }, { execution: { unknown: true } },
+  ]) {
+    assert.equal((await invoke(route, 'PATCH', '/api/automation/v1/tasks/task', JSON.stringify(body), headers)).status, 400)
+  }
+  assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task/resume', '{"runNow":"yes"}', headers)).status, 400)
+  assert.equal((await invoke(route, 'PUT', '/api/automation/v1/tasks/task', undefined, headers)).status, 405)
+  assert.equal((await invoke(route, 'GET', '/api/automation/v1/unknown')).status, 404)
 })

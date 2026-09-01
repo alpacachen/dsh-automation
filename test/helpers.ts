@@ -14,6 +14,7 @@ export const execution: AutomationExecution = {
   agentPreset: 'standard',
   provider: 'test-provider',
   model: 'test-model',
+  skills: [],
 }
 
 export function createRequest(schedule: AutomationSchedule, name = 'Test automation'): CreateAutomationRequest {

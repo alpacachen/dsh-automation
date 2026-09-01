@@ -115,6 +115,12 @@ export class AutomationDomain {
     const prompt = request.prompt.trim()
     if (!name) throw new Error('Automation name must not be empty.')
     if (!prompt) throw new Error('Automation prompt must not be empty.')
+    if ((request.execution.provider === undefined) !== (request.execution.model === undefined)) {
+      throw new Error('provider and model must be set together.')
+    }
+    for (const value of [request.execution.agentPreset, request.execution.provider, request.execution.model]) {
+      if (value !== undefined && !value.trim()) throw new Error('Execution override ids must not be empty.')
+    }
     const schedule = validateSchedule(request.schedule, now)
     const first = nextOccurrence(schedule, now)
     if (first === undefined) {
@@ -133,7 +139,13 @@ export class AutomationDomain {
       pauseAfterConsecutiveFailures: request.pauseAfterConsecutiveFailures ?? false,
       consecutiveFailures: 0,
       unreadNotifications: 0,
-      execution: request.execution,
+      execution: {
+        ...request.execution,
+        ...(request.execution.agentPreset === undefined ? {} : { agentPreset: request.execution.agentPreset.trim() }),
+        ...(request.execution.provider === undefined ? {} : { provider: request.execution.provider.trim() }),
+        ...(request.execution.model === undefined ? {} : { model: request.execution.model.trim() }),
+        skills: normalizeSkills(request.execution.skills),
+      },
       security: {
         permissionPreset: request.permissionPreset,
         source: 'user-confirmed',
@@ -147,13 +159,19 @@ export class AutomationDomain {
     return structuredClone(task)
   }
 
-  async update(id: string, request: UpdateAutomationRequest, now: number): Promise<AutomationTask> {
+  async update(
+    id: string,
+    request: UpdateAutomationRequest,
+    now: number,
+    beforeCommit?: (current: AutomationTask) => Promise<void>,
+  ): Promise<AutomationTask> {
     if (this.store.snapshot().tasks[id] === undefined) {
       throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
     }
-    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined && request.permissionPreset === undefined) {
+    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined && request.permissionPreset === undefined && (request.execution === undefined || Object.keys(request.execution).length === 0)) {
       throw new Error('Supply at least one field to update.')
     }
+    if (request.execution !== undefined) validateExecutionPatch(request.execution)
     const name = request.name?.trim()
     const prompt = request.prompt?.trim()
     if (name === '') throw new Error('Automation name must not be empty.')
@@ -164,9 +182,10 @@ export class AutomationDomain {
       throw new AutomationDomainError('schedule_exhausted', 'The recurring schedule has no future occurrence.')
     }
 
-    return this.store.mutate((state) => {
+    return this.store.mutate(async (state) => {
       const task = state.tasks[id]
       if (task === undefined) throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
+      await beforeCommit?.(structuredClone(task))
       if (name !== undefined) task.name = name
       if (prompt !== undefined) task.prompt = prompt
       if (request.notificationPolicy !== undefined) task.notificationPolicy = request.notificationPolicy
@@ -177,6 +196,15 @@ export class AutomationDomain {
         task.security.permissionPreset = request.permissionPreset
         task.security.source = 'user-confirmed'
         task.security.grantedAt = instant(now)
+      }
+      if (request.execution !== undefined) {
+        const patch = request.execution
+        for (const key of ['agentPreset', 'provider', 'model'] as const) {
+          if (patch[key] === undefined) continue
+          if (patch[key] === null) delete task.execution[key]
+          else task.execution[key] = patch[key].trim()
+        }
+        if (patch.skills !== undefined) task.execution.skills = normalizeSkills(patch.skills)
       }
       if (schedule !== undefined) {
         task.schedule = schedule
@@ -372,4 +400,23 @@ export class AutomationDomain {
       pruneRuns(current, this.maxRunHistory)
     })
   }
+}
+
+function normalizeSkills(skills: readonly string[]): string[] {
+  const normalized = skills.map((name) => name.trim())
+  if (normalized.some((name) => !name)) throw new Error('Skill names must not be empty.')
+  if (new Set(normalized).size !== normalized.length) throw new Error('Skill names must be unique.')
+  return normalized
+}
+
+function validateExecutionPatch(patch: NonNullable<UpdateAutomationRequest['execution']>): void {
+  const providerSupplied = patch.provider !== undefined
+  const modelSupplied = patch.model !== undefined
+  if (providerSupplied !== modelSupplied || (providerSupplied && ((patch.provider === null) !== (patch.model === null)))) {
+    throw new Error('provider and model must be set or cleared together.')
+  }
+  for (const value of [patch.agentPreset, patch.provider, patch.model]) {
+    if (typeof value === 'string' && !value.trim()) throw new Error('Execution override ids must not be empty.')
+  }
+  if (patch.skills !== undefined) normalizeSkills(patch.skills)
 }

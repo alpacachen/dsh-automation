@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
+import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
 import styles from './styles.css'
@@ -243,8 +243,15 @@ function notificationPolicyLabel(policy: AutomationTaskView['notificationPolicy'
   return t('notificationFailures')
 }
 
-function permissionLabel(preset: AutomationTaskView['security']['permissionPreset'], t: typeof translate): string {
-  return preset === 'read-only' ? t('permissionReadOnly') : t('permissionFullAccess')
+function permissionLabel(
+  preset: AutomationTaskView['security']['permissionPreset'],
+  t: typeof translate,
+  displayName?: string,
+): string {
+  if (displayName !== undefined) return displayName
+  if (preset === 'read-only') return t('permissionReadOnly')
+  if (preset === 'danger-full-access') return t('permissionFullAccess')
+  return preset
 }
 
 function statusClass(status: string): string {
@@ -256,6 +263,7 @@ function statusClass(status: string): string {
 type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>> & {
   permissionPreset?: AutomationTaskView['security']['permissionPreset']
   confirmPermissionChange?: true
+  execution?: AutomationExecutionPatch
 }
 
 const WEEKDAY_KEYS = {
@@ -301,6 +309,13 @@ function EditTaskForm({
   const [pauseAfterFailures, setPauseAfterFailures] = React.useState(task.pauseAfterConsecutiveFailures)
   const [permissionPreset, setPermissionPreset] = React.useState(task.security.permissionPreset)
   const [permissionConfirmed, setPermissionConfirmed] = React.useState(false)
+  const [agentPreset, setAgentPreset] = React.useState(task.execution.agentPreset ?? '')
+  const [provider, setProvider] = React.useState(task.execution.provider ?? '')
+  const [model, setModel] = React.useState(task.execution.model ?? '')
+  const [skills, setSkills] = React.useState<string[]>(task.execution.skills)
+  const [options, setOptions] = React.useState<AgentConfigurationOptions>()
+  const [optionsLoading, setOptionsLoading] = React.useState(true)
+  const [optionsError, setOptionsError] = React.useState<string>()
   const [kind, setKind] = React.useState<AutomationTaskView['schedule']['kind']>(task.schedule.kind)
   const [onceAt, setOnceAt] = React.useState(toLocalDateTime(fallbackInstant))
   const defaultMonthDay = String(Number((task.schedule.kind === 'recurring' ? task.schedule.startAt : toLocalDateTime(fallbackInstant)).slice(8, 10)))
@@ -323,8 +338,34 @@ function EditTaskForm({
     ? task.schedule.kind !== 'once' || onceAt !== toLocalDateTime(task.schedule.fireAt)
     : task.schedule.kind !== 'recurring' || effectiveRrule !== initialComparableRrule || timeZone !== task.schedule.timeZone || normalizedStartAt !== task.schedule.startAt)
   const permissionChanged = permissionPreset !== task.security.permissionPreset
+  const modelChanged = provider !== (task.execution.provider ?? '') || model !== (task.execution.model ?? '')
+  const executionChanged = agentPreset !== (task.execution.agentPreset ?? '') || modelChanged ||
+    skills.join('\0') !== task.execution.skills.join('\0')
   const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged || permissionChanged ||
-    notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
+    executionChanged || notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
+  const selectedPermission = options?.permissions.find((entry) => entry.id === permissionPreset)
+  const selectedProvider = options?.models.find((entry) => entry.provider === provider)
+  const selectedPresetAvailable = agentPreset === '' || options?.presets.some((entry) => entry.id === agentPreset && entry.broken === undefined)
+  const skillsAvailable = skills.every((name) => options?.skills.some((entry) => entry.name === name))
+  const legacyPartialModelUnchanged = !modelChanged && ((task.execution.provider === undefined) !== (task.execution.model === undefined))
+  const configValid = selectedPresetAvailable !== false && skillsAvailable && selectedPermission !== undefined &&
+    (((provider === '') === (model === '')) || legacyPartialModelUnchanged)
+
+  const loadOptions = React.useCallback(async (candidate?: string) => {
+    try {
+      setOptionsLoading(true)
+      setOptionsError(undefined)
+      const query = candidate === undefined ? '' : `?agentPreset=${encodeURIComponent(candidate)}`
+      const value = await request(`/tasks/${encodeURIComponent(task.id)}/options${query}`) as { options: AgentConfigurationOptions }
+      setOptions(value.options)
+    } catch (reason) {
+      setOptionsError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setOptionsLoading(false)
+    }
+  }, [task.id])
+
+  React.useEffect(() => { void loadOptions() }, [loadOptions])
 
   return (
     <form
@@ -343,6 +384,16 @@ function EditTaskForm({
           ...(notificationPolicy === task.notificationPolicy ? {} : { notificationPolicy }),
           ...(pauseAfterFailures === task.pauseAfterConsecutiveFailures ? {} : { pauseAfterConsecutiveFailures: pauseAfterFailures }),
           ...(permissionChanged ? { permissionPreset, confirmPermissionChange: true as const } : {}),
+          ...(executionChanged ? {
+            execution: {
+              ...(agentPreset === (task.execution.agentPreset ?? '') ? {} : { agentPreset: agentPreset || null }),
+              ...((provider === (task.execution.provider ?? '') && model === (task.execution.model ?? '')) ? {} : {
+                provider: provider || null,
+                model: model || null,
+              }),
+              ...(skills.join('\0') === task.execution.skills.join('\0') ? {} : { skills }),
+            },
+          } : {}),
         })
       }}
     >
@@ -355,6 +406,62 @@ function EditTaskForm({
           <span>{t('nameLabel')}</span>
           <input required value={name} onChange={(event) => setName(event.target.value)} />
         </label>
+        <div className="automation-config-section is-full">
+          <h3>{t('agentExecution')}</h3>
+          {optionsError !== undefined && <p className="automation-config-error" role="alert">{t('optionsFailure', { error: optionsError })}</p>}
+          {optionsLoading && <p className="automation-config-status" aria-live="polite">{t('optionsLoading')}</p>}
+          <fieldset className="automation-config-grid" disabled={saving || optionsLoading}>
+            <label className="automation-field is-full">
+              <span>{t('agentPreset')}</span>
+              <select value={agentPreset} onChange={(event) => {
+                const value = event.target.value
+                setAgentPreset(value)
+                void loadOptions(value)
+              }}>
+                <option value="">{t('hostDefault')}</option>
+                {agentPreset !== '' && !options?.presets.some((entry) => entry.id === agentPreset) && <option value={agentPreset}>{agentPreset} · {t('unavailable')}</option>}
+                {options?.presets.map((entry) => <option key={entry.id} value={entry.id} disabled={entry.broken !== undefined}>
+                  {entry.name} · {entry.trust}{entry.broken === undefined ? '' : ` · ${t('unavailable')}`}
+                </option>)}
+              </select>
+              {agentPreset !== '' && options?.presets.find((entry) => entry.id === agentPreset)?.description !== undefined && <small>{options.presets.find((entry) => entry.id === agentPreset)!.description}</small>}
+            </label>
+            <label className="automation-field">
+              <span>{t('provider')}</span>
+              <select value={provider} onChange={(event) => {
+                const value = event.target.value
+                setProvider(value)
+                setModel('')
+              }}>
+                <option value="">{t('hostDefault')}</option>
+                {provider !== '' && !options?.models.some((entry) => entry.provider === provider) && <option value={provider}>{provider} · {t('unavailable')}</option>}
+                {options?.models.map((entry) => <option key={entry.provider} value={entry.provider}>{entry.name}</option>)}
+              </select>
+            </label>
+            <label className="automation-field">
+              <span>{t('model')}</span>
+              <select value={model} disabled={saving || optionsLoading || provider === ''} onChange={(event) => setModel(event.target.value)}>
+                <option value="">{provider === '' ? t('hostDefault') : t('selectModel')}</option>
+                {model !== '' && !selectedProvider?.models.some((entry) => entry.id === model) && <option value={model}>{model} · {t('notInCatalog')}</option>}
+                {selectedProvider?.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+              </select>
+            </label>
+            {options?.modelFailures.map((failure) => <p key={failure.provider} className="automation-config-error is-full" role="alert">{t('providerFailure', { provider: failure.provider, error: failure.error })}</p>)}
+            <div className="automation-field is-full">
+              <span>{t('selectedSkills')}</span>
+              <div className="automation-skills">
+                {[...new Set([...skills, ...(options?.skills.map((entry) => entry.name) ?? [])])].map((name) => {
+                  const option = options?.skills.find((entry) => entry.name === name)
+                  return <label key={name} className={option === undefined ? 'is-unavailable' : undefined}>
+                    <input type="checkbox" checked={skills.includes(name)} onChange={(event) => setSkills(event.target.checked ? [...skills, name] : skills.filter((entry) => entry !== name))} />
+                    <span><b>{name}</b>{option === undefined ? t('unavailable') : option.description}{option?.modelInvocable ? ` · ${t('modelInvocable')}` : ''}</span>
+                  </label>
+                })}
+                {(options?.skills.length ?? 0) === 0 && skills.length === 0 && <small>{t('noSkills')}</small>}
+              </div>
+            </div>
+          </fieldset>
+        </div>
         <label className="automation-field is-full">
           <span>{t('promptLabel')}</span>
           <textarea required rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
@@ -501,24 +608,26 @@ function EditTaskForm({
         </label>
         <label className="automation-field">
           <span>{t('permission')}</span>
-          <select value={permissionPreset} onChange={(event) => {
+          <select value={permissionPreset} disabled={optionsLoading} onChange={(event) => {
             setPermissionPreset(event.target.value as AutomationTaskView['security']['permissionPreset'])
             setPermissionConfirmed(false)
           }}>
-            <option value="read-only">{t('permissionReadOnly')}</option>
-            <option value="danger-full-access">{t('permissionFullAccess')}</option>
+            {!options?.permissions.some((entry) => entry.id === permissionPreset) && <option value={permissionPreset}>{permissionPreset} · {t('unavailable')}</option>}
+            {options?.permissions.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
           </select>
+          {selectedPermission !== undefined && <small>{[selectedPermission.description, `${selectedPermission.sandbox} · approval: ${selectedPermission.approval}`].filter(Boolean).join(' · ')}</small>}
         </label>
+        {selectedPermission?.approval === 'ask' && <p className="automation-approval-warning is-full" role="alert">{t('approvalAskWarning')}</p>}
         {permissionChanged && (
           <label className="automation-permission-confirm is-full">
             <input type="checkbox" checked={permissionConfirmed} onChange={(event) => setPermissionConfirmed(event.target.checked)} />
-            <span>{t('confirmPermissionChange', { permission: permissionLabel(permissionPreset, t) })}</span>
+            <span>{t('confirmPermissionChange', { permission: permissionLabel(permissionPreset, t, selectedPermission?.name) })}</span>
           </label>
         )}
       </fieldset>
       <div className="automation-editor-actions">
         <button type="button" className="automation-button" disabled={saving} onClick={onCancel}>{t('cancel')}</button>
-        <button type="submit" className="automation-button is-primary" disabled={saving || !changed || (permissionChanged && !permissionConfirmed)}>
+        <button type="submit" className="automation-button is-primary" disabled={saving || optionsLoading || !configValid || !changed || (permissionChanged && !permissionConfirmed)}>
           {saving ? t('saving') : t('saveChanges')}
         </button>
       </div>
@@ -753,7 +862,11 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                     </div>
                     <div className="automation-fact">
                       <Icon name="shield" />
-                      <span><b>{t('permission')}</b>{permissionLabel(task.security.permissionPreset, t)}</span>
+                      <span><b>{t('permission')}</b>{permissionLabel(task.security.permissionPreset, t, task.permissionDisplayName)}</span>
+                    </div>
+                    <div className="automation-fact">
+                      <Icon name="shield" />
+                      <span><b>{t('agentExecution')}</b>{task.execution.agentPreset ?? t('hostDefault')} · {task.execution.provider === undefined ? t('hostDefault') : `${task.execution.provider}/${task.execution.model}`} · {task.execution.skills.length === 0 ? t('noSelectedSkills') : task.execution.skills.join(', ')}</span>
                     </div>
                     <div className="automation-fact">
                       <Icon name="shield" />

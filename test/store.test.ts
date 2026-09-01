@@ -35,6 +35,30 @@ test('run records from v0.3.5 remain valid without a summary', () => {
   assert.deepEqual(AutomationRunSchema.parse(run), run)
 })
 
+test('legacy tasks gain skills in memory without startup rewrite', async (t) => {
+  const directory = await temporaryDirectory()
+  t.after(directory.cleanup)
+  const path = join(directory.path, 'state.json')
+  const legacy = {
+    version: 1, revision: 4, tasks: {
+      old: {
+        id: 'old', name: 'Old', prompt: 'Run.', createdAt: '2026-03-20T00:00:00.000Z', createdBySessionId: 'creator', status: 'active',
+        schedule: { kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }, nextRunAt: '2026-03-21T00:00:00.000Z',
+        execution: { workspaceId: 'workspace', cwd: '/tmp/workspace', agentPreset: 'standard' },
+        security: { permissionPreset: 'read-only', source: 'plugin-default', grantedAt: '2026-03-20T00:00:00.000Z' }, runs: [],
+      },
+    },
+  }
+  const original = `${JSON.stringify(legacy, null, 2)}\n`
+  await writeFile(path, original)
+  const store = new AutomationStore(path)
+  await store.init()
+  assert.deepEqual(store.snapshot().tasks.old?.execution.skills, [])
+  assert.equal(await readFile(path, 'utf8'), original)
+  await store.mutate(() => undefined)
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')).tasks.old.execution.skills, [])
+})
+
 test('corrupt JSON and unsupported state versions fail closed without overwrite', async (t) => {
   const directory = await temporaryDirectory()
   t.after(directory.cleanup)
