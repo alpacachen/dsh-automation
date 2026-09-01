@@ -76,14 +76,16 @@ test('registers complete Agent management tool surface and disposes it', async (
     'automation_run',
     'automation_update',
   ])
-  const created = await fixture.byName('automation_create').execute({
+  const create = fixture.byName('automation_create')
+  assert.match(create.description, /schedule and time zone, current workspace, permission, notification policy/)
+  const created = await create.execute({
     name: 'Task',
     prompt: 'Do work.',
     once_at: '2026-03-21T00:00:00.000Z',
     notification_policy: 'always',
     pause_after_failures: true,
     permission_preset: 'read-only',
-    permission_confirmed: true,
+    creation_confirmed: true,
   }, fixture.exec)
   assert.equal(created.ok, true)
   assert.match(created.message, /read-only/)
@@ -107,7 +109,7 @@ test('registers complete Agent management tool surface and disposes it', async (
 test('create rejects mixed or incomplete schedule selectors and wrong agent scope', async () => {
   const fixture = setup()
   const create = fixture.byName('automation_create')
-  const confirmed = { permission_preset: 'read-only', permission_confirmed: true }
+  const confirmed = { permission_preset: 'read-only', creation_confirmed: true }
   const incomplete = await create.execute({ name: 'Task', prompt: 'Do work.', rrule: 'FREQ=DAILY', ...confirmed }, fixture.exec)
   assert.equal(incomplete.ok, false)
   assert.match(incomplete.error, /either once_at/)
@@ -126,7 +128,7 @@ test('create rejects mixed or incomplete schedule selectors and wrong agent scop
   const incompleteUpdate = await update.execute({ id: 'automation-task', rrule: 'FREQ=DAILY' }, fixture.exec)
   assert.equal(incompleteUpdate.ok, false)
   assert.match(incompleteUpdate.error, /either once_at/)
-  const unconfirmed = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z', permission_preset: 'danger-full-access', permission_confirmed: false }, fixture.exec)
+  const unconfirmed = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z', permission_preset: 'danger-full-access', creation_confirmed: false }, fixture.exec)
   assert.equal(unconfirmed.ok, false)
   assert.match(unconfirmed.error, /confirmation/)
   const unconfirmedUpdate = await update.execute({ id: 'automation-task', permission_preset: 'danger-full-access' }, fixture.exec)

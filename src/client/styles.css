@@ -176,6 +176,10 @@
   font: var(--dsw-font-xxs-12);
 }
 
+.automation-create-button {
+  flex: none;
+}
+
 .automation-icon-button {
   display: inline-grid;
   width: 32px;
@@ -1093,6 +1097,16 @@
 
   .automation-button.is-primary {
     flex: 1;
+  }
+
+  .automation-panel-header .automation-create-button {
+    flex: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .automation-create-label {
+    display: none;
   }
 }
 

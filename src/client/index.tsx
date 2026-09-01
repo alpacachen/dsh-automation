@@ -26,7 +26,7 @@ let draftRevision = 0
 
 type OverlayProps = PropsRuntime<'shell.overlay'>
 type InputDockProps = PropsRuntime<'conversation.input.dock'>
-type IconName = 'calendar' | 'chevron' | 'clock' | 'close' | 'edit' | 'external' | 'folder' | 'pause' | 'play' | 'refresh' | 'shield' | 'trash'
+type IconName = 'calendar' | 'chevron' | 'clock' | 'close' | 'edit' | 'external' | 'folder' | 'pause' | 'play' | 'plus' | 'refresh' | 'shield' | 'trash'
 
 const iconPaths: Record<IconName, string[]> = {
   calendar: ['M3 9h18', 'M7 3v4', 'M17 3v4', 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z'],
@@ -38,6 +38,7 @@ const iconPaths: Record<IconName, string[]> = {
   folder: ['M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z', 'M3 7V5a2 2 0 0 1 2-2h4l2 2'],
   pause: ['M9 5v14', 'M15 5v14'],
   play: ['m8 5 11 7-11 7Z'],
+  plus: ['M12 5v14', 'M5 12h14'],
   refresh: ['M20 7v5h-5', 'M4 17v-5h5', 'M6.1 8a8 8 0 0 1 13.4 2.5L20 12', 'M4 12l.5 1.5A8 8 0 0 0 17.9 16'],
   shield: ['M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z', 'm9 12 2 2 4-4'],
   trash: ['M4 7h16', 'M9 7V4h6v3', 'm6 7 1 14h10l1-14', 'M10 11v6', 'M14 11v6'],
@@ -650,6 +651,17 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
             <h2>{t('automations')}</h2>
             <p>{t('taskCount', { count: tasks.length })}</p>
           </div>
+          <button
+            type="button"
+            className="automation-button is-primary automation-create-button"
+            disabled={creatingExampleId !== undefined}
+            aria-label={t('newAutomation')}
+            title={t('newAutomation')}
+            onClick={() => void startExample('new', t('guidedCreationPrompt'))}
+          >
+            <Icon name="plus" />
+            <span className="automation-create-label">{creatingExampleId === 'new' ? t('creatingConversation') : t('newAutomation')}</span>
+          </button>
           <button type="button" className="automation-icon-button" onClick={() => void refresh()} disabled={loading} aria-label={t('refresh')} title={t('refresh')}>
             <span className={loading ? 'automation-spin' : undefined}><Icon name="refresh" /></span>
           </button>
