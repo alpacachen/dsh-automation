@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from './controller.js'
-import { AutomationScheduleSchema, NotificationPolicySchema, type UpdateAutomationRequest } from './types.js'
+import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
 
@@ -45,7 +45,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 function parseUpdate(body: Record<string, unknown>): UpdateAutomationRequest {
-  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures'].includes(key))) {
+  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange'].includes(key))) {
     throw new Error('Update body contains an unknown field.')
   }
   if (body.name !== undefined && typeof body.name !== 'string') throw new Error('name must be a string.')
@@ -55,12 +55,17 @@ function parseUpdate(body: Record<string, unknown>): UpdateAutomationRequest {
   }
   const schedule = body.schedule === undefined ? undefined : AutomationScheduleSchema.parse(body.schedule)
   const notificationPolicy = body.notificationPolicy === undefined ? undefined : NotificationPolicySchema.parse(body.notificationPolicy)
+  const permissionPreset = body.permissionPreset === undefined ? undefined : AutomationPermissionPresetSchema.parse(body.permissionPreset)
+  if (permissionPreset !== undefined && body.confirmPermissionChange !== true) {
+    throw new Error('confirmPermissionChange must be true when changing permissions.')
+  }
   return {
     ...(body.name === undefined ? {} : { name: body.name as string }),
     ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
     ...(schedule === undefined ? {} : { schedule }),
     ...(notificationPolicy === undefined ? {} : { notificationPolicy }),
     ...(body.pauseAfterConsecutiveFailures === undefined ? {} : { pauseAfterConsecutiveFailures: body.pauseAfterConsecutiveFailures as boolean }),
+    ...(permissionPreset === undefined ? {} : { permissionPreset }),
   }
 }
 

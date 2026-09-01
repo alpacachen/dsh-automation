@@ -31,9 +31,11 @@ export const AutomationExecutionSchema = z.strictObject({
   model: z.string().min(1).optional(),
 })
 
+export const AutomationPermissionPresetSchema = z.enum(['read-only', 'danger-full-access'])
+
 export const AutomationSecuritySchema = z.strictObject({
-  permissionPreset: z.literal('danger-full-access'),
-  source: z.literal('plugin-default'),
+  permissionPreset: AutomationPermissionPresetSchema,
+  source: z.enum(['plugin-default', 'user-confirmed']),
   grantedAt: Instant,
 })
 
@@ -83,6 +85,7 @@ export type RecurringSchedule = z.infer<typeof RecurringScheduleSchema>
 export type AutomationSchedule = z.infer<typeof AutomationScheduleSchema>
 export type AutomationExecution = z.infer<typeof AutomationExecutionSchema>
 export type AutomationSecurity = z.infer<typeof AutomationSecuritySchema>
+export type AutomationPermissionPreset = z.infer<typeof AutomationPermissionPresetSchema>
 export type NotificationPolicy = z.infer<typeof NotificationPolicySchema>
 export type AutomationRun = z.infer<typeof AutomationRunSchema>
 export type AutomationTask = z.infer<typeof AutomationTaskSchema>
@@ -96,6 +99,7 @@ export interface CreateAutomationRequest {
   readonly schedule: AutomationSchedule
   readonly execution: AutomationExecution
   readonly createdBySessionId: string
+  readonly permissionPreset: AutomationPermissionPreset
   readonly notificationPolicy?: NotificationPolicy
   readonly pauseAfterConsecutiveFailures?: boolean
 }
@@ -106,6 +110,7 @@ export interface UpdateAutomationRequest {
   readonly schedule?: AutomationSchedule
   readonly notificationPolicy?: NotificationPolicy
   readonly pauseAfterConsecutiveFailures?: boolean
+  readonly permissionPreset?: AutomationPermissionPreset
 }
 
 export interface AutomationTaskView extends AutomationTask {
@@ -126,7 +131,6 @@ export interface AutomationSchedulerHealth {
 
 export interface AutomationConfig {
   readonly root: string
-  readonly executionPermissionPreset: 'danger-full-access'
   readonly maxRunHistory: number
 }
 

@@ -24,6 +24,7 @@ function setup() {
     pauseAfterConsecutiveFailures: false,
     consecutiveFailures: 0,
     unreadNotifications: 0,
+    security: { permissionPreset: 'danger-full-access', source: 'plugin-default', grantedAt: '2026-03-20T00:00:00.000Z' },
     runs: [],
   }
   const rootCtx = {
@@ -40,13 +41,13 @@ function setup() {
   } as unknown as Context
   const calls: string[] = []
   const controller = {
-    create: async (request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean }) => {
-      calls.push(`create:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}`)
-      return { ...task, notificationPolicy: request.notificationPolicy ?? 'failures', pauseAfterConsecutiveFailures: request.pauseAfterConsecutiveFailures ?? false }
+    create: async (request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean; permissionPreset: 'read-only' | 'danger-full-access' }) => {
+      calls.push(`create:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}:${request.permissionPreset}`)
+      return { ...task, notificationPolicy: request.notificationPolicy ?? 'failures', pauseAfterConsecutiveFailures: request.pauseAfterConsecutiveFailures ?? false, security: { ...task.security, permissionPreset: request.permissionPreset } }
     },
-    update: async (_id: string, request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean }) => {
-      calls.push(`update:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}`)
-      return { ...task, ...request }
+    update: async (_id: string, request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean; permissionPreset?: string }) => {
+      calls.push(`update:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}:${request.permissionPreset}`)
+      return { ...task, ...request, security: { ...task.security, permissionPreset: request.permissionPreset ?? task.security.permissionPreset } }
     },
     list: () => [{ ...task, running: false }],
     delete: async () => { calls.push('delete'); return true },
@@ -81,9 +82,11 @@ test('registers complete Agent management tool surface and disposes it', async (
     once_at: '2026-03-21T00:00:00.000Z',
     notification_policy: 'always',
     pause_after_failures: true,
+    permission_preset: 'read-only',
+    permission_confirmed: true,
   }, fixture.exec)
   assert.equal(created.ok, true)
-  assert.match(created.message, /danger-full-access/)
+  assert.match(created.message, /read-only/)
   assert.equal((await fixture.byName('automation_list').execute({}, fixture.exec)).tasks.length, 1)
   const run = await fixture.byName('automation_run').execute({ id: 'automation-task' }, fixture.exec)
   assert.deepEqual(run, {
@@ -92,11 +95,11 @@ test('registers complete Agent management tool surface and disposes it', async (
     status: 'queued',
     message: 'Queued manual run run-manual for automation-task.',
   })
-  await fixture.byName('automation_update').execute({ id: 'automation-task', prompt: 'Updated work.', notification_policy: 'never', pause_after_failures: false }, fixture.exec)
+  await fixture.byName('automation_update').execute({ id: 'automation-task', prompt: 'Updated work.', notification_policy: 'never', pause_after_failures: false, permission_preset: 'read-only', permission_confirmed: true }, fixture.exec)
   await fixture.byName('automation_pause').execute({ id: 'automation-task' }, fixture.exec)
   await fixture.byName('automation_resume').execute({ id: 'automation-task', run_now: true }, fixture.exec)
   await fixture.byName('automation_delete').execute({ id: 'automation-task' }, fixture.exec)
-  assert.deepEqual(fixture.calls, ['create:always:true', 'run', 'update:never:false', 'pause', 'resume', 'delete'])
+  assert.deepEqual(fixture.calls, ['create:always:true:read-only', 'run', 'update:never:false:read-only', 'pause', 'resume', 'delete'])
   fixture.dispose()
   assert.equal(fixture.disposed(), 7)
 })
@@ -104,7 +107,8 @@ test('registers complete Agent management tool surface and disposes it', async (
 test('create rejects mixed or incomplete schedule selectors and wrong agent scope', async () => {
   const fixture = setup()
   const create = fixture.byName('automation_create')
-  const incomplete = await create.execute({ name: 'Task', prompt: 'Do work.', rrule: 'FREQ=DAILY' }, fixture.exec)
+  const confirmed = { permission_preset: 'read-only', permission_confirmed: true }
+  const incomplete = await create.execute({ name: 'Task', prompt: 'Do work.', rrule: 'FREQ=DAILY', ...confirmed }, fixture.exec)
   assert.equal(incomplete.ok, false)
   assert.match(incomplete.error, /either once_at/)
   const mixed = await create.execute({
@@ -114,6 +118,7 @@ test('create rejects mixed or incomplete schedule selectors and wrong agent scop
     rrule: 'FREQ=DAILY',
     time_zone: 'UTC',
     start_at: '2026-03-20T09:00:00',
+    ...confirmed,
   }, fixture.exec)
   assert.equal(mixed.ok, false)
   const update = fixture.byName('automation_update')
@@ -121,7 +126,13 @@ test('create rejects mixed or incomplete schedule selectors and wrong agent scop
   const incompleteUpdate = await update.execute({ id: 'automation-task', rrule: 'FREQ=DAILY' }, fixture.exec)
   assert.equal(incompleteUpdate.ok, false)
   assert.match(incompleteUpdate.error, /either once_at/)
-  const wrongScope = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z' }, {
+  const unconfirmed = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z', permission_preset: 'danger-full-access', permission_confirmed: false }, fixture.exec)
+  assert.equal(unconfirmed.ok, false)
+  assert.match(unconfirmed.error, /confirmation/)
+  const unconfirmedUpdate = await update.execute({ id: 'automation-task', permission_preset: 'danger-full-access' }, fixture.exec)
+  assert.equal(unconfirmedUpdate.ok, false)
+  assert.match(unconfirmedUpdate.error, /confirmation/)
+  const wrongScope = await create.execute({ name: 'Task', prompt: 'Do work.', once_at: '2026-03-21T00:00:00.000Z', ...confirmed }, {
     ...fixture.exec,
     agent: {} as Agent,
   })

@@ -23,6 +23,7 @@ export function createRequest(schedule: AutomationSchedule, name = 'Test automat
     schedule,
     execution,
     createdBySessionId: 'session-creator',
+    permissionPreset: 'danger-full-access',
   }
 }
 

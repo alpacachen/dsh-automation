@@ -113,7 +113,7 @@ function fakeContext(
 
 test('runner keeps a completed session live for immediate sidebar visibility', async () => {
   const fake = fakeContext()
-  const runner = new DshAutomationRunner(fake.ctx, 'danger-full-access')
+  const runner = new DshAutomationRunner(fake.ctx)
   const result = await runner.run(task, run)
   assert.equal(result.status, 'succeeded')
   assert.match(result.sessionId, /^automation-/)
@@ -125,9 +125,19 @@ test('runner keeps a completed session live for immediate sidebar visibility', a
   assert.match(fake.order.find((entry) => entry.startsWith('title:')) ?? '', /^title:\[Automation\]/)
 })
 
+test('runner applies each task permission preset before execution', async () => {
+  const fake = fakeContext()
+  await new DshAutomationRunner(fake.ctx).run({
+    ...task,
+    security: { ...task.security, permissionPreset: 'read-only' },
+  }, run)
+  assert.ok(fake.order.includes('permission:read-only'))
+  assert.match(JSON.stringify(fake.messages[0]), /Permission preset: read-only/)
+})
+
 test('each invocation uses a different session id', async () => {
   const fake = fakeContext()
-  const runner = new DshAutomationRunner(fake.ctx, 'danger-full-access')
+  const runner = new DshAutomationRunner(fake.ctx)
   const first = await runner.run(task, run)
   const second = await runner.run(task, { ...run, id: 'run-second' })
   assert.notEqual(first.sessionId, second.sessionId)
@@ -136,7 +146,7 @@ test('each invocation uses a different session id', async () => {
 
 test('runner reuses the session id persisted when the run was claimed', async () => {
   const fake = fakeContext()
-  const result = await new DshAutomationRunner(fake.ctx, 'danger-full-access').run(task, {
+  const result = await new DshAutomationRunner(fake.ctx).run(task, {
     ...run,
     sessionId: 'automation-persisted',
   })
@@ -146,7 +156,7 @@ test('runner reuses the session id persisted when the run was claimed', async ()
 
 test('runner stores a bounded summary from the final assistant message', async () => {
   const fake = fakeContext({ kind: 'completed' }, `  Finished\n\n${'x'.repeat(600)}  `)
-  const result = await new DshAutomationRunner(fake.ctx, 'danger-full-access').run(task, run)
+  const result = await new DshAutomationRunner(fake.ctx).run(task, run)
   assert.match(result.summary ?? '', /^Finished x+/)
   assert.equal([...(result.summary ?? '')].length, 500)
   assert.ok(result.summary?.endsWith('…'))
@@ -154,7 +164,7 @@ test('runner stores a bounded summary from the final assistant message', async (
 
 test('non-completed turn is reported as failed while preserving its session id', async () => {
   const fake = fakeContext({ kind: 'error', error: { message: 'model unavailable' } })
-  const result = await new DshAutomationRunner(fake.ctx, 'danger-full-access').run(task, run)
+  const result = await new DshAutomationRunner(fake.ctx).run(task, run)
   assert.equal(result.status, 'failed')
   assert.match(result.error ?? '', /model unavailable/)
   assert.match(result.sessionId, /^automation-/)
@@ -164,7 +174,7 @@ test('non-completed turn is reported as failed while preserving its session id',
 test('workspace attachment failure still disposes the created Agent', async () => {
   const fake = fakeContext()
   fake.workspace.attachSession = async () => { throw new Error('attach failed') }
-  await assert.rejects(() => new DshAutomationRunner(fake.ctx, 'danger-full-access').run(task, run), /attach failed/)
+  await assert.rejects(() => new DshAutomationRunner(fake.ctx).run(task, run), /attach failed/)
   assert.equal(fake.disposed(), 1)
 })
 
@@ -178,7 +188,7 @@ test('cancellation requested during Agent creation prevents execution', async ()
     await createGate
     return create(options)
   }
-  const runner = new DshAutomationRunner(fake.ctx, 'danger-full-access')
+  const runner = new DshAutomationRunner(fake.ctx)
 
   const resultPromise = runner.run(task, run)
   assert.equal(runner.cancel(run.id, 'manual'), true)
@@ -218,7 +228,7 @@ test('active cancellation reaches Agent.cancel and preserves the session', async
     }
     return handle
   }
-  const runner = new DshAutomationRunner(fake.ctx, 'danger-full-access')
+  const runner = new DshAutomationRunner(fake.ctx)
 
   const resultPromise = runner.run(task, run)
   await idleStarted

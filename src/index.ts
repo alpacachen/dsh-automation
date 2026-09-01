@@ -39,22 +39,21 @@ export interface Config {
   readonly root?: string
   readonly maxRunHistory?: number
   readonly maxRunDurationMs?: number
-  readonly executionPermissionPreset?: 'danger-full-access'
 }
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const root = resolve(config.root ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'automation'))
-  const permissionPreset = config.executionPermissionPreset ?? 'danger-full-access'
   const maxRunDurationMs = config.maxRunDurationMs ?? DEFAULT_MAX_RUN_DURATION_MS
   if (!Number.isSafeInteger(maxRunDurationMs) || maxRunDurationMs <= 0 || maxRunDurationMs > MAX_TIMER_DELAY_MS) {
     throw new Error(`maxRunDurationMs must be an integer between 1 and ${MAX_TIMER_DELAY_MS}.`)
   }
-  ctx.permissionPresets.resolve(permissionPreset)
+  ctx.permissionPresets.resolve('read-only')
+  ctx.permissionPresets.resolve('danger-full-access')
 
   const store = new AutomationStore(join(root, 'state.json'))
   const domain = new AutomationDomain(store, config.maxRunHistory ?? 20)
   await domain.init(Date.now())
-  const runner = new DshAutomationRunner(ctx, permissionPreset)
+  const runner = new DshAutomationRunner(ctx)
   const scheduler = new AutomationScheduler(domain, runner, undefined, (error) => {
     ctx.logger.error(`automation scheduler failed and will retry: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
   }, maxRunDurationMs)

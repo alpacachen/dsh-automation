@@ -242,13 +242,20 @@ function notificationPolicyLabel(policy: AutomationTaskView['notificationPolicy'
   return t('notificationFailures')
 }
 
+function permissionLabel(preset: AutomationTaskView['security']['permissionPreset'], t: typeof translate): string {
+  return preset === 'read-only' ? t('permissionReadOnly') : t('permissionFullAccess')
+}
+
 function statusClass(status: string): string {
   return ['active', 'paused', 'completed', 'queued', 'running', 'succeeded', 'failed', 'interrupted', 'outcome_unknown', 'timed_out', 'canceled'].includes(status)
     ? `is-${status}`
     : 'is-neutral'
 }
 
-type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>>
+type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>> & {
+  permissionPreset?: AutomationTaskView['security']['permissionPreset']
+  confirmPermissionChange?: true
+}
 
 const WEEKDAY_KEYS = {
   MO: 'weekdayMonday',
@@ -291,6 +298,8 @@ function EditTaskForm({
   const [prompt, setPrompt] = React.useState(task.prompt)
   const [notificationPolicy, setNotificationPolicy] = React.useState(task.notificationPolicy)
   const [pauseAfterFailures, setPauseAfterFailures] = React.useState(task.pauseAfterConsecutiveFailures)
+  const [permissionPreset, setPermissionPreset] = React.useState(task.security.permissionPreset)
+  const [permissionConfirmed, setPermissionConfirmed] = React.useState(false)
   const [kind, setKind] = React.useState<AutomationTaskView['schedule']['kind']>(task.schedule.kind)
   const [onceAt, setOnceAt] = React.useState(toLocalDateTime(fallbackInstant))
   const defaultMonthDay = String(Number((task.schedule.kind === 'recurring' ? task.schedule.startAt : toLocalDateTime(fallbackInstant)).slice(8, 10)))
@@ -312,7 +321,8 @@ function EditTaskForm({
   const scheduleChanged = task.schedule.kind !== kind || (kind === 'once'
     ? task.schedule.kind !== 'once' || onceAt !== toLocalDateTime(task.schedule.fireAt)
     : task.schedule.kind !== 'recurring' || effectiveRrule !== initialComparableRrule || timeZone !== task.schedule.timeZone || normalizedStartAt !== task.schedule.startAt)
-  const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged ||
+  const permissionChanged = permissionPreset !== task.security.permissionPreset
+  const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged || permissionChanged ||
     notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
 
   return (
@@ -331,6 +341,7 @@ function EditTaskForm({
           ...(schedule === undefined ? {} : { schedule }),
           ...(notificationPolicy === task.notificationPolicy ? {} : { notificationPolicy }),
           ...(pauseAfterFailures === task.pauseAfterConsecutiveFailures ? {} : { pauseAfterConsecutiveFailures: pauseAfterFailures }),
+          ...(permissionChanged ? { permissionPreset, confirmPermissionChange: true as const } : {}),
         })
       }}
     >
@@ -487,10 +498,26 @@ function EditTaskForm({
             <option value="enabled">{t('enabled')}</option>
           </select>
         </label>
+        <label className="automation-field">
+          <span>{t('permission')}</span>
+          <select value={permissionPreset} onChange={(event) => {
+            setPermissionPreset(event.target.value as AutomationTaskView['security']['permissionPreset'])
+            setPermissionConfirmed(false)
+          }}>
+            <option value="read-only">{t('permissionReadOnly')}</option>
+            <option value="danger-full-access">{t('permissionFullAccess')}</option>
+          </select>
+        </label>
+        {permissionChanged && (
+          <label className="automation-permission-confirm is-full">
+            <input type="checkbox" checked={permissionConfirmed} onChange={(event) => setPermissionConfirmed(event.target.checked)} />
+            <span>{t('confirmPermissionChange', { permission: permissionLabel(permissionPreset, t) })}</span>
+          </label>
+        )}
       </fieldset>
       <div className="automation-editor-actions">
         <button type="button" className="automation-button" disabled={saving} onClick={onCancel}>{t('cancel')}</button>
-        <button type="submit" className="automation-button is-primary" disabled={saving || !changed}>
+        <button type="submit" className="automation-button is-primary" disabled={saving || !changed || (permissionChanged && !permissionConfirmed)}>
           {saving ? t('saving') : t('saveChanges')}
         </button>
       </div>
@@ -711,6 +738,10 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                     <div className="automation-fact">
                       <Icon name="folder" />
                       <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
+                    </div>
+                    <div className="automation-fact">
+                      <Icon name="shield" />
+                      <span><b>{t('permission')}</b>{permissionLabel(task.security.permissionPreset, t)}</span>
                     </div>
                     <div className="automation-fact">
                       <Icon name="shield" />
