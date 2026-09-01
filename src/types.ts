@@ -104,6 +104,14 @@ export interface ResumeOptions {
   readonly runNow: boolean
 }
 
+export interface AutomationSchedulerHealth {
+  readonly status: 'healthy' | 'retrying' | 'stopped'
+  readonly consecutiveFailures: number
+  readonly lastError?: string
+  readonly lastFailedAt?: string
+  readonly retryAt?: string
+}
+
 export interface AutomationConfig {
   readonly root: string
   readonly executionPermissionPreset: 'danger-full-access'

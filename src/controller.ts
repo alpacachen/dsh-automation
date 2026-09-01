@@ -2,6 +2,7 @@ import type { AutomationDomain } from './domain.js'
 import type { AutomationScheduler } from './scheduler.js'
 import type {
   AutomationRun,
+  AutomationSchedulerHealth,
   AutomationTask,
   AutomationTaskView,
   CreateAutomationRequest,
@@ -22,6 +23,10 @@ export class AutomationController {
 
   get(id: string): AutomationTask {
     return this.domain.get(id)
+  }
+
+  schedulerHealth(): AutomationSchedulerHealth {
+    return this.scheduler.health()
   }
 
   async create(request: CreateAutomationRequest): Promise<AutomationTask> {

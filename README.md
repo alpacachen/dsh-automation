@@ -79,6 +79,7 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 
 - Automations run globally one at a time and never overlap.
 - DSH must be running when work is due; after restart, only the latest missed occurrence runs.
+- Transient scheduler failures retry automatically with bounded exponential backoff.
 - Paused occurrences are skipped; **Resume & run** does not move the original schedule.
 
 ## 🗓️ Schedule formats

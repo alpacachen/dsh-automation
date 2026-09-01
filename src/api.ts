@@ -75,7 +75,7 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
       const suffix = url.pathname.slice(API_ROOT.length)
       try {
         if (req.method === 'GET' && (suffix === '' || suffix === '/tasks')) {
-          send(res, 200, { tasks: controller.list() })
+          send(res, 200, { tasks: controller.list(), scheduler: controller.schedulerHealth() })
           return
         }
         const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume))?$/.exec(suffix)

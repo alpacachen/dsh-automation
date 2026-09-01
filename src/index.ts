@@ -51,7 +51,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   await domain.init(Date.now())
   const runner = new DshAutomationRunner(ctx, permissionPreset)
   const scheduler = new AutomationScheduler(domain, runner, undefined, (error) => {
-    ctx.logger.error(`automation scheduler stopped: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
+    ctx.logger.error(`automation scheduler failed and will retry: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
   })
   const controller = new AutomationController(domain, scheduler)
   const toolCleanups = new Map<Agent, () => void>()

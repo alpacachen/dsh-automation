@@ -20,6 +20,7 @@ test('HTTP API lists and manages automations with CSRF header enforcement', asyn
   const calls: string[] = []
   const controller = {
     list: () => [{ id: 'task-1' }],
+    schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
     update: async (id: string, request: { name?: string }) => { calls.push(`update:${id}:${request.name}`); return { id, name: request.name } },
     runNow: async (id: string) => { calls.push(`run:${id}`); return { id: 'run-1' } },
     pause: async (id: string) => { calls.push(`pause:${id}`); return { id, status: 'paused' } },
@@ -41,7 +42,10 @@ test('HTTP API lists and manages automations with CSRF header enforcement', asyn
 
   const listed = await fetch(`${base}/api/automation/v1/tasks`)
   assert.equal(listed.status, 200)
-  assert.deepEqual(await listed.json(), { tasks: [{ id: 'task-1' }] })
+  assert.deepEqual(await listed.json(), {
+    tasks: [{ id: 'task-1' }],
+    scheduler: { status: 'healthy', consecutiveFailures: 0 },
+  })
 
   const denied = await fetch(`${base}/api/automation/v1/tasks/task-1/run`, { method: 'POST' })
   assert.equal(denied.status, 403)
@@ -62,6 +66,7 @@ test('HTTP API rejects cross-origin, invalid bodies, methods and unknown routes'
   } as unknown as Context
   const controller = {
     list: () => [],
+    schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
     resume: async () => ({ id: 'task', status: 'active' }),
   } as unknown as AutomationController
   registerAutomationApi(ctx, controller)
