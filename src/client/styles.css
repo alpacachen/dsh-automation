@@ -762,6 +762,18 @@
   opacity: 0.65;
 }
 
+.automation-permission-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.automation-permission-confirm input {
+  margin-top: 2px;
+}
+
 .automation-editor-actions {
   display: flex;
   justify-content: flex-end;

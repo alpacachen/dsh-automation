@@ -22,7 +22,7 @@ const daily = {
   startAt: '2026-03-20T09:00:00',
 }
 
-test('create trims input and stores execution and full-access audit state', async (t) => {
+test('create trims input and stores confirmed permission audit state', async (t) => {
   const { domain } = await setup(t)
   const task = await domain.create(
     { ...createRequest(daily), name: ' Daily review ', prompt: ' Review the project. ' },
@@ -32,15 +32,16 @@ test('create trims input and stores execution and full-access audit state', asyn
   assert.equal(task.prompt, 'Review the project.')
   assert.equal(task.nextRunAt, '2026-03-20T09:00:00.000Z')
   assert.equal(task.security.permissionPreset, 'danger-full-access')
+  assert.equal(task.security.source, 'user-confirmed')
   assert.equal(task.notificationPolicy, 'failures')
   assert.equal(task.pauseAfterConsecutiveFailures, false)
   assert.deepEqual(domain.list().map((entry) => entry.id), [task.id])
 })
 
-test('v0.3.6 tasks load with safe notification defaults', async (t) => {
+test('older tasks load with safe notification defaults and unchanged full access', async (t) => {
   const { domain } = await setup(t)
   const task = await domain.create(createRequest(daily), Date.parse('2026-03-20T00:00:00.000Z'))
-  const legacy: Record<string, unknown> = { ...task }
+  const legacy: Record<string, unknown> = { ...task, security: { ...task.security, source: 'plugin-default' } }
   delete legacy.notificationPolicy
   delete legacy.pauseAfterConsecutiveFailures
   delete legacy.consecutiveFailures
@@ -50,6 +51,8 @@ test('v0.3.6 tasks load with safe notification defaults', async (t) => {
   assert.equal(parsed.pauseAfterConsecutiveFailures, false)
   assert.equal(parsed.consecutiveFailures, 0)
   assert.equal(parsed.unreadNotifications, 0)
+  assert.equal(parsed.security.permissionPreset, 'danger-full-access')
+  assert.equal(parsed.security.source, 'plugin-default')
 })
 
 test('update replaces requested fields and preserves paused state', async (t) => {
@@ -61,6 +64,7 @@ test('update replaces requested fields and preserves paused state', async (t) =>
     schedule: { kind: 'once', fireAt: '2026-03-22T10:00:00.000Z' },
     notificationPolicy: 'always',
     pauseAfterConsecutiveFailures: true,
+    permissionPreset: 'read-only',
   }, Date.parse('2026-03-20T01:00:00.000Z'))
   assert.equal(updated.name, 'Release check')
   assert.equal(updated.prompt, 'Check the release.')
@@ -68,6 +72,9 @@ test('update replaces requested fields and preserves paused state', async (t) =>
   assert.equal(updated.nextRunAt, '2026-03-22T10:00:00.000Z')
   assert.equal(updated.notificationPolicy, 'always')
   assert.equal(updated.pauseAfterConsecutiveFailures, true)
+  assert.equal(updated.security.permissionPreset, 'read-only')
+  assert.equal(updated.security.source, 'user-confirmed')
+  assert.equal(updated.security.grantedAt, '2026-03-20T01:00:00.000Z')
 
   await domain.pause(task.id, Date.parse('2026-03-20T02:00:00.000Z'))
   const paused = await domain.update(task.id, { schedule: daily }, Date.parse('2026-03-20T03:00:00.000Z'))

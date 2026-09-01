@@ -135,8 +135,8 @@ export class AutomationDomain {
       unreadNotifications: 0,
       execution: request.execution,
       security: {
-        permissionPreset: 'danger-full-access',
-        source: 'plugin-default',
+        permissionPreset: request.permissionPreset,
+        source: 'user-confirmed',
         grantedAt: instant(now),
       },
       runs: [],
@@ -151,7 +151,7 @@ export class AutomationDomain {
     if (this.store.snapshot().tasks[id] === undefined) {
       throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
     }
-    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined) {
+    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined && request.permissionPreset === undefined) {
       throw new Error('Supply at least one field to update.')
     }
     const name = request.name?.trim()
@@ -172,6 +172,11 @@ export class AutomationDomain {
       if (request.notificationPolicy !== undefined) task.notificationPolicy = request.notificationPolicy
       if (request.pauseAfterConsecutiveFailures !== undefined) {
         task.pauseAfterConsecutiveFailures = request.pauseAfterConsecutiveFailures
+      }
+      if (request.permissionPreset !== undefined && request.permissionPreset !== task.security.permissionPreset) {
+        task.security.permissionPreset = request.permissionPreset
+        task.security.source = 'user-confirmed'
+        task.security.grantedAt = instant(now)
       }
       if (schedule !== undefined) {
         task.schedule = schedule

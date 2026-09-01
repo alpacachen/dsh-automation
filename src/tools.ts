@@ -45,6 +45,7 @@ const TASK_SUMMARY_SCHEMA = {
     running: { type: 'boolean', required: true },
     lastRunStatus: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
     notificationPolicy: { type: 'string', required: true },
+    permissionPreset: { type: 'string', required: true },
     consecutiveFailures: { type: 'number', required: true },
   },
 } as const
@@ -87,6 +88,7 @@ function summary(task: AutomationTaskView) {
     running: task.running,
     lastRunStatus: task.runs.at(-1)?.status ?? null,
     notificationPolicy: task.notificationPolicy,
+    permissionPreset: task.security.permissionPreset,
     consecutiveFailures: task.consecutiveFailures,
   }
 }
@@ -138,7 +140,7 @@ export function registerAutomationTools(
 
   disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_create',
-    description: 'Create one durable unattended automation. Every run starts a fresh visible session with danger-full-access. Supply either once_at, or rrule + time_zone + start_at. Ask for a notification policy when the user intent is ambiguous; otherwise default to failures.',
+    description: 'Create one durable unattended automation. Every run starts a fresh visible session. Before calling, show the user the selected permission preset and get explicit confirmation; set permission_confirmed only after they confirm. Use read-only for inspection/reporting that must not modify files, or danger-full-access for tasks that need unrestricted writes. Supply either once_at, or rrule + time_zone + start_at. Ask for a notification policy when the user intent is ambiguous; otherwise default to failures.',
     parameters: {
       name: { type: 'string', required: true, description: 'Short task name.' },
       prompt: { type: 'string', required: true, description: 'Self-contained prompt for every fresh run session.' },
@@ -148,11 +150,14 @@ export function registerAutomationTools(
       start_at: { type: 'string', description: 'Recurring local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
       notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Sidebar notification policy. Defaults to failures.' },
       pause_after_failures: { type: 'boolean', description: 'Pause future scheduling after 3 consecutive failed or timed-out runs.' },
+      permission_preset: { type: 'string', required: true, enum: ['read-only', 'danger-full-access'], description: 'Confirmed permission for every run. Prefer read-only when no file changes are needed.' },
+      permission_confirmed: { type: 'boolean', required: true, description: 'Must be true only after the user explicitly confirms the displayed permission.' },
     },
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
         if (exec.agent !== agent) throw new Error('automation_create must run in its owning agent scope.')
+        if (args.permission_confirmed !== true) throw new Error('Explicit user confirmation of the permission preset is required.')
         const cwd = agent.session.header.cwd
         if (cwd === undefined) throw new Error('The current session has no workspace directory.')
         const workspace = await rootCtx.workspaceRegistry.create(cwd)
@@ -170,6 +175,7 @@ export function registerAutomationTools(
             ...(agent.options.model === undefined ? {} : { model: agent.options.model }),
           },
           createdBySessionId: agent.id,
+          permissionPreset: args.permission_preset,
           ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
           ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
         })
@@ -177,7 +183,7 @@ export function registerAutomationTools(
           ok: true as const,
           id: task.id,
           status: task.status,
-          message: `Created ${task.name}; next run ${task.nextRunAt}; notifications ${task.notificationPolicy}. All runs use danger-full-access without approval prompts.`,
+          message: `Created ${task.name}; next run ${task.nextRunAt}; permission ${task.security.permissionPreset}; notifications ${task.notificationPolicy}.`,
         }
       } catch (error) {
         return failure(error)
@@ -188,7 +194,7 @@ export function registerAutomationTools(
 
   disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_update',
-    description: 'Update an existing automation. Omitted fields stay unchanged. To replace its schedule, supply either once_at, or all of rrule, time_zone, and start_at.',
+    description: 'Update an existing automation. Omitted fields stay unchanged. To replace its schedule, supply either once_at, or all of rrule, time_zone, and start_at. Before changing permissions, show the new preset to the user and get explicit confirmation; set permission_confirmed only after they confirm.',
     parameters: {
       id: { type: 'string', required: true, description: 'Exact automation id.' },
       name: { type: 'string', description: 'Replacement task name.' },
@@ -199,13 +205,18 @@ export function registerAutomationTools(
       start_at: { type: 'string', description: 'Replacement local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
       notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Replacement sidebar notification policy.' },
       pause_after_failures: { type: 'boolean', description: 'Whether to pause after 3 consecutive failed or timed-out runs.' },
+      permission_preset: { type: 'string', enum: ['read-only', 'danger-full-access'], description: 'Replacement permission preset for future runs.' },
+      permission_confirmed: { type: 'boolean', description: 'Required and true only after the user explicitly confirms a permission change.' },
     },
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
         if (exec.agent !== agent) throw new Error('automation_update must run in its owning agent scope.')
         const schedule = updateSchedule(args)
-        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined) {
+        if (args.permission_preset !== undefined && args.permission_confirmed !== true) {
+          throw new Error('Explicit user confirmation is required to change permissions.')
+        }
+        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined && args.permission_preset === undefined) {
           throw new Error('Supply at least one field to update.')
         }
         const task = await controller.update(args.id, {
@@ -214,8 +225,9 @@ export function registerAutomationTools(
           ...(schedule === undefined ? {} : { schedule }),
           ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
           ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
+          ...(args.permission_preset === undefined ? {} : { permissionPreset: args.permission_preset }),
         })
-        return { ok: true as const, id: task.id, status: task.status, message: `Updated ${task.id}; next run ${task.nextRunAt}.` }
+        return { ok: true as const, id: task.id, status: task.status, message: `Updated ${task.id}; next run ${task.nextRunAt}; permission ${task.security.permissionPreset}.` }
       } catch (error) {
         return failure(error)
       }

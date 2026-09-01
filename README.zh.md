@@ -22,6 +22,7 @@
 - 🗓️ **可靠调度**：支持单次时间、RFC 5545 周期规则和 IANA 时区。
 - 🧼 **独立会话**：每次运行都是新会话，不携带之前的聊天历史。
 - 👀 **过程可见**：结果摘要、耗时、错误、运行历史和会话入口集中展示。
+- 🛡️ **权限可控**：每个任务可选择 DSH 原生只读或完全访问权限。
 - 🎛️ **随时管理**：编辑、立即运行、暂停、恢复或删除任务。
 
 ## 🚀 快速开始
@@ -46,6 +47,8 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 
 创建后，在侧边栏打开 **「自动化任务」** 即可管理。
 
+创建前，Agent 会展示所选权限并请你确认。升级不会改变已有任务保存的权限。
+
 ## 🎛️ 管理与编辑
 
 任务卡支持：
@@ -54,6 +57,7 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 - 立即运行、暂停、恢复或恢复并运行；
 - 打开最近会话和历史运行；
 - 选择仅失败、每次完成或不显示侧边栏通知；
+- 查看或修改后续运行权限；修改权限必须再次确认；
 - 重试失败运行，并可在连续失败 3 次后自动暂停；
 - 删除未来计划，同时保留已有会话。
 
@@ -105,8 +109,8 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 
 | 工具 | 用途 |
 | --- | --- |
-| `automation_create` | 创建任务并设置通知及失败暂停策略 |
-| `automation_update` | 修改名称、提示词、计划或恢复策略 |
+| `automation_create` | 确认权限及策略后创建任务 |
+| `automation_update` | 修改任务设置；权限变更必须确认 |
 | `automation_list` | 查看任务与运行状态 |
 | `automation_run` | 立即运行一次，不改变原计划 |
 | `automation_pause` | 暂停未来调度 |

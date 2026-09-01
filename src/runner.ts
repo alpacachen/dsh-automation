@@ -43,7 +43,7 @@ function promptFor(task: AutomationTask, run: AutomationRun): string {
     `Run: ${run.id}`,
     `Trigger: ${run.trigger}`,
     ...(run.scheduledAt === undefined ? [] : [`Scheduled occurrence: ${run.scheduledAt}`]),
-    `Permission preset: danger-full-access. Do not create or modify automations from this run.`,
+    `Permission preset: ${task.security.permissionPreset}. Do not create or modify automations from this run.`,
     '',
     task.prompt,
   ].join('\n')
@@ -52,10 +52,7 @@ function promptFor(task: AutomationTask, run: AutomationRun): string {
 export class DshAutomationRunner implements AutomationRunner {
   private readonly active = new Map<string, { agent?: Agent; cancelReason?: AutomationRunCancelReason }>()
 
-  constructor(
-    private readonly ctx: Context,
-    private readonly permissionPreset: 'danger-full-access',
-  ) {}
+  constructor(private readonly ctx: Context) {}
 
   cancel(runId: string, reason: AutomationRunCancelReason): boolean {
     const active = this.active.get(runId)
@@ -95,7 +92,7 @@ export class DshAutomationRunner implements AutomationRunner {
         },
       })
       active.agent = handle.agent
-      this.ctx.permissionPresets.set(handle.agent.session, this.permissionPreset)
+      this.ctx.permissionPresets.set(handle.agent.session, task.security.permissionPreset)
       this.ctx.sessionTitle.rename(handle.agent.session, titleFor(task, run))
       await this.ctx.sessions.flush(handle.agent.session)
       await workspace.attachSession(sessionId)

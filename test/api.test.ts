@@ -22,8 +22,8 @@ test('HTTP API lists and manages automations with CSRF header enforcement', asyn
     list: () => [{ id: 'task-1' }],
     schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
     markNotificationsRead: async () => { calls.push('read') },
-    update: async (id: string, request: { name?: string; notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean }) => {
-      calls.push(`update:${id}:${request.name}:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}`)
+    update: async (id: string, request: { name?: string; notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean; permissionPreset?: string }) => {
+      calls.push(`update:${id}:${request.name}:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}:${request.permissionPreset}`)
       return { id, ...request }
     },
     runNow: async (id: string) => { calls.push(`run:${id}`); return { id: 'run-1' } },
@@ -57,7 +57,7 @@ test('HTTP API lists and manages automations with CSRF header enforcement', asyn
 
   const headers = { 'x-dsh-automation': '1', 'content-type': 'application/json' }
   assert.equal((await fetch(`${base}/api/automation/v1/notifications/read`, { method: 'POST', headers })).status, 200)
-  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1`, { method: 'PATCH', headers, body: '{"name":"Updated","notificationPolicy":"always","pauseAfterConsecutiveFailures":true}' })).status, 200)
+  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1`, { method: 'PATCH', headers, body: '{"name":"Updated","notificationPolicy":"always","pauseAfterConsecutiveFailures":true,"permissionPreset":"read-only","confirmPermissionChange":true}' })).status, 200)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/run`, { method: 'POST', headers })).status, 202)
   const stopped = await fetch(`${base}/api/automation/v1/tasks/task-1/stop`, { method: 'POST', headers })
   assert.equal(stopped.status, 202)
@@ -65,7 +65,7 @@ test('HTTP API lists and manages automations with CSRF header enforcement', asyn
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/pause`, { method: 'POST', headers })).status, 200)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1/resume`, { method: 'POST', headers, body: '{"runNow":true}' })).status, 200)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task-1`, { method: 'DELETE', headers })).status, 200)
-  assert.deepEqual(calls, ['read', 'update:task-1:Updated:always:true', 'run:task-1', 'stop:task-1', 'pause:task-1', 'resume:task-1:true', 'delete:task-1'])
+  assert.deepEqual(calls, ['read', 'update:task-1:Updated:always:true:read-only', 'run:task-1', 'stop:task-1', 'pause:task-1', 'resume:task-1:true', 'delete:task-1'])
 })
 
 test('HTTP API rejects cross-origin, invalid bodies, methods and unknown routes', async (t) => {
@@ -89,6 +89,7 @@ test('HTTP API rejects cross-origin, invalid bodies, methods and unknown routes'
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task/resume`, { method: 'POST', headers, body: '{"runNow":"yes"}' })).status, 400)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PATCH', headers, body: '{"name":1}' })).status, 400)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PATCH', headers, body: '{"notificationPolicy":"sometimes"}' })).status, 400)
+  assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PATCH', headers, body: '{"permissionPreset":"danger-full-access"}' })).status, 400)
   assert.equal((await fetch(`${base}/api/automation/v1/tasks/task`, { method: 'PUT', headers })).status, 405)
   assert.equal((await fetch(`${base}/api/automation/v1/unknown`, { headers })).status, 404)
 })

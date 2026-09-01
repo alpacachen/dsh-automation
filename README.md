@@ -22,6 +22,7 @@ Run one-time or recurring tasks. Every run opens a fresh, visible DSH session.
 - 🗓️ **Schedule precisely** — one-time instants, RFC 5545 recurrence, and IANA time zones.
 - 🧼 **Start fresh** — every run uses a new session with no previous chat history.
 - 👀 **Stay informed** — see result summaries, duration, errors, history, and session links in one place.
+- 🛡️ **Limit access** — choose DSH's read-only or full-access permission preset for each task.
 - 🎛️ **Stay in control** — edit, run, pause, resume, or delete tasks from the UI.
 
 ## 🚀 Quick start
@@ -46,6 +47,8 @@ Or:
 
 After creation, open **Automations** in the sidebar to manage the task.
 
+The Agent shows the selected permission and asks you to confirm it before creation. Existing tasks keep their saved permission when upgrading.
+
 ## 🎛️ Manage and edit
 
 Each task card lets you:
@@ -54,6 +57,7 @@ Each task card lets you:
 - run now, pause, resume, or resume and run;
 - open the latest session or any recent run;
 - choose failure-only, every-completion, or no sidebar notifications;
+- see or change the permission for future runs; permission changes require confirmation;
 - retry failed runs and optionally pause after three consecutive failures;
 - delete future scheduling while keeping existing sessions.
 
@@ -105,8 +109,8 @@ Schedule due → Global queue → Fresh session → Agent runs → Result and se
 
 | Tool | Purpose |
 | --- | --- |
-| `automation_create` | Create a task with notification and failure-pause policy |
-| `automation_update` | Change its name, prompt, schedule, or recovery policy |
+| `automation_create` | Create a task after confirming its permission and policies |
+| `automation_update` | Change its settings; permission changes require confirmation |
 | `automation_list` | List tasks and current run state |
 | `automation_run` | Queue one immediate run without changing the schedule |
 | `automation_pause` | Pause future scheduling |
