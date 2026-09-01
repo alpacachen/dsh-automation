@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { AutomationTaskView } from '../types.js'
+import type { AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
 import styles from './styles.css'
@@ -429,6 +429,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
     return state.recentWorkspaceId
   })
   const [tasks, setTasks] = React.useState<AutomationTaskView[]>([])
+  const [schedulerHealth, setSchedulerHealth] = React.useState<AutomationSchedulerHealth>()
   const [loading, setLoading] = React.useState(false)
   const [actingTaskId, setActingTaskId] = React.useState<string>()
   const [confirmingTaskId, setConfirmingTaskId] = React.useState<string>()
@@ -444,8 +445,9 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
   const refresh = React.useCallback(async () => {
     try {
       setLoading(true)
-      const value = await request('/tasks') as { tasks: AutomationTaskView[] }
+      const value = await request('/tasks') as { tasks: AutomationTaskView[]; scheduler: AutomationSchedulerHealth }
       setTasks(value.tasks)
+      setSchedulerHealth(value.scheduler)
       setError(undefined)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -550,6 +552,12 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
 
         <div className="automation-panel-body automation-scroll">
           {error !== undefined && <div className="automation-error" role="alert">{error}</div>}
+          {schedulerHealth?.status === 'retrying' && (
+            <div className="automation-error" role="alert">{t('schedulerRetrying', { error: schedulerHealth.lastError ?? t('unknownError') })}</div>
+          )}
+          {schedulerHealth?.status === 'stopped' && (
+            <div className="automation-error" role="alert">{t('schedulerStopped')}</div>
+          )}
 
           {tasks.length === 0 && loading && (
             <div className="automation-empty" aria-live="polite">
