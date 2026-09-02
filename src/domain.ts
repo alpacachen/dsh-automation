@@ -62,6 +62,13 @@ function makeRun(trigger: AutomationRun['trigger'], now: number, scheduledAt?: n
   }
 }
 
+function snapshotTarget(execution: AutomationTask['execution']): AutomationRun['executionTarget'] {
+  const target = execution.target ?? { mode: 'fresh' as const }
+  return target.mode === 'pinned-session'
+    ? { mode: 'pinned-session', sessionId: target.sessionId }
+    : { mode: 'fresh' }
+}
+
 function pruneRuns(task: AutomationTask, maxHistory: number): void {
   if (task.runs.length <= maxHistory) return
   const active = task.runs.filter(nonTerminal)
@@ -118,6 +125,7 @@ export class AutomationDomain {
     if ((request.execution.provider === undefined) !== (request.execution.model === undefined)) {
       throw new Error('provider and model must be set together.')
     }
+    validateTarget({ ...request.execution, target: request.execution.target ?? { mode: 'fresh' } }, request.sessionTargetConfirmed === true)
     for (const value of [request.execution.agentPreset, request.execution.provider, request.execution.model]) {
       if (value !== undefined && !value.trim()) throw new Error('Execution override ids must not be empty.')
     }
@@ -145,6 +153,7 @@ export class AutomationDomain {
         ...(request.execution.provider === undefined ? {} : { provider: request.execution.provider.trim() }),
         ...(request.execution.model === undefined ? {} : { model: request.execution.model.trim() }),
         skills: normalizeSkills(request.execution.skills),
+        ...(request.execution.target === undefined ? { target: { mode: 'fresh' as const } } : { target: request.execution.target }),
       },
       security: {
         permissionPreset: request.permissionPreset,
@@ -171,7 +180,10 @@ export class AutomationDomain {
     if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined && request.permissionPreset === undefined && (request.execution === undefined || Object.keys(request.execution).length === 0)) {
       throw new Error('Supply at least one field to update.')
     }
-    if (request.execution !== undefined) validateExecutionPatch(request.execution)
+    if (request.execution !== undefined) {
+      validateExecutionPatch(request.execution)
+      if (request.execution.target !== undefined) validateTarget({ ...this.get(id).execution, target: request.execution.target }, request.execution.sessionTargetConfirmed === true)
+    }
     const name = request.name?.trim()
     const prompt = request.prompt?.trim()
     if (name === '') throw new Error('Automation name must not be empty.')
@@ -199,6 +211,10 @@ export class AutomationDomain {
       }
       if (request.execution !== undefined) {
         const patch = request.execution
+        if (patch.target !== undefined) {
+          validateTarget({ ...task.execution, target: patch.target }, patch.sessionTargetConfirmed === true)
+          task.execution.target = patch.target
+        }
         for (const key of ['agentPreset', 'provider', 'model'] as const) {
           if (patch[key] === undefined) continue
           if (patch[key] === null) delete task.execution[key]
@@ -218,7 +234,12 @@ export class AutomationDomain {
           delete task.pausedNextRunAt
         }
       }
-      return structuredClone(task)
+      const result = structuredClone(task)
+      if (result.execution.target?.mode === 'fresh') {
+        const { target: _target, ...execution } = result.execution
+        return { ...result, execution }
+      }
+      return result
     })
   }
 
@@ -284,7 +305,7 @@ export class AutomationDomain {
         task.status = next === undefined ? 'completed' : 'active'
         task.nextRunAt = next === undefined ? null : instant(next)
       }
-      if (options.runNow) task.runs.push(makeRun('manual', now))
+      if (options.runNow) task.runs.push({ ...makeRun('manual', now), executionTarget: snapshotTarget(task.execution) })
       pruneRuns(task, this.maxRunHistory)
       return structuredClone(task)
     })
@@ -297,7 +318,7 @@ export class AutomationDomain {
       if (task.runs.some(nonTerminal)) {
         throw new AutomationDomainError('run_in_progress', `Automation ${id} already has a queued or running run.`)
       }
-      const run = makeRun('manual', now)
+      const run = { ...makeRun('manual', now), executionTarget: snapshotTarget(task.execution) }
       task.runs.push(run)
       pruneRuns(task, this.maxRunHistory)
       return structuredClone(run)
@@ -333,7 +354,7 @@ export class AutomationDomain {
         const occurrence = latestDueOccurrence(task.schedule, floor, now)
         if (occurrence === undefined) continue
         if (!task.runs.some(nonTerminal)) {
-          const run = makeRun('scheduled', now, occurrence)
+          const run = { ...makeRun('scheduled', now, occurrence), executionTarget: snapshotTarget(task.execution) }
           task.runs.push(run)
           claimed.push(structuredClone(run))
         }
@@ -371,7 +392,7 @@ export class AutomationDomain {
       if (task === undefined || run === undefined || run.status !== 'queued') return undefined
       run.status = 'running'
       run.startedAt = instant(now)
-      run.sessionId ??= `automation-${randomUUID()}`
+      run.sessionId ??= run.executionTarget?.mode === 'pinned-session' ? run.executionTarget.sessionId : `automation-${randomUUID()}`
       return { task: structuredClone(task), run: structuredClone(run) }
     })
   }
@@ -419,4 +440,14 @@ function validateExecutionPatch(patch: NonNullable<UpdateAutomationRequest['exec
     if (typeof value === 'string' && !value.trim()) throw new Error('Execution override ids must not be empty.')
   }
   if (patch.skills !== undefined) normalizeSkills(patch.skills)
+}
+
+function validateTarget(execution: AutomationTask['execution'], confirmed: boolean): void {
+  const target = execution.target ?? { mode: 'fresh' as const }
+  if (target.mode === 'pinned-session') {
+    if (!confirmed) throw new Error('Explicit user confirmation is required for a pinned session target.')
+    if (target.workspaceId !== execution.workspaceId || target.cwd !== execution.cwd) {
+      throw new Error('Pinned session target workspace and cwd must match execution settings.')
+    }
+  }
 }

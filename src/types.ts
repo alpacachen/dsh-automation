@@ -30,6 +30,16 @@ export const AutomationExecutionSchema = z.strictObject({
   provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   skills: z.array(z.string().min(1)).default([]),
+  target: z.discriminatedUnion('mode', [
+    z.strictObject({ mode: z.literal('fresh') }),
+    z.strictObject({
+      mode: z.literal('pinned-session'),
+      sessionId: z.string().min(1),
+      workspaceId: z.string().min(1),
+      cwd: z.string().min(1),
+      fallback: z.literal('fail'),
+    }),
+  ]).default({ mode: 'fresh' }),
 })
 
 export const AutomationPermissionPresetSchema = z.string().trim().min(1)
@@ -51,6 +61,7 @@ export const AutomationRunSchema = z.strictObject({
   finishedAt: Instant.optional(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'interrupted', 'outcome_unknown', 'timed_out', 'canceled']),
   sessionId: z.string().min(1).optional(),
+  executionTarget: z.strictObject({ mode: z.enum(['fresh', 'pinned-session']), sessionId: z.string().min(1).optional() }).optional(),
   summary: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
 })
@@ -84,13 +95,14 @@ export const AutomationStateSchema = z.strictObject({
 export type OnceSchedule = z.infer<typeof OnceScheduleSchema>
 export type RecurringSchedule = z.infer<typeof RecurringScheduleSchema>
 export type AutomationSchedule = z.infer<typeof AutomationScheduleSchema>
-export type AutomationExecution = z.infer<typeof AutomationExecutionSchema>
+export type AutomationExecutionTarget = z.infer<typeof AutomationExecutionSchema>['target']
+export type AutomationExecution = Omit<z.infer<typeof AutomationExecutionSchema>, 'target'> & { target?: AutomationExecutionTarget }
 export type AutomationSecurity = z.infer<typeof AutomationSecuritySchema>
 export type AutomationPermissionPreset = z.infer<typeof AutomationPermissionPresetSchema>
 export type NotificationPolicy = z.infer<typeof NotificationPolicySchema>
 export type AutomationRun = z.infer<typeof AutomationRunSchema>
-export type AutomationTask = z.infer<typeof AutomationTaskSchema>
-export type AutomationState = z.infer<typeof AutomationStateSchema>
+export type AutomationTask = Omit<z.infer<typeof AutomationTaskSchema>, 'execution'> & { execution: AutomationExecution }
+export type AutomationState = Omit<z.infer<typeof AutomationStateSchema>, 'tasks'> & { tasks: Record<string, AutomationTask> }
 export type AutomationStatus = AutomationTask['status']
 export type AutomationRunStatus = AutomationRun['status']
 
@@ -101,6 +113,7 @@ export interface CreateAutomationRequest {
   readonly execution: AutomationExecution
   readonly createdBySessionId: string
   readonly permissionPreset: AutomationPermissionPreset
+  readonly sessionTargetConfirmed?: true
   readonly notificationPolicy?: NotificationPolicy
   readonly pauseAfterConsecutiveFailures?: boolean
 }
@@ -121,6 +134,8 @@ export interface AutomationExecutionPatch {
   readonly provider?: string | null
   readonly model?: string | null
   readonly skills?: readonly string[]
+  readonly target?: AutomationExecutionTarget
+  readonly sessionTargetConfirmed?: true
 }
 
 export interface AgentConfigurationOptions {

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import type { AutomationController } from '../src/controller.js'
 import { registerAutomationTools } from '../src/tools.js'
 
@@ -31,6 +32,7 @@ function setup() {
   const rootCtx = {
     workspaceRegistry: { create: async () => ({ id: 'workspace', path: '/tmp/workspace' }) },
     agentPresets: { composedPreset: () => 'standard' },
+    sessionPersistence: { inspect: async (id: SessionId) => ({ meta: { id, cwd: '/tmp/workspace' } }) },
   } as unknown as Context
   const toolCtx = {
     tools: {
@@ -146,4 +148,18 @@ test('create rejects mixed or incomplete schedule selectors and wrong agent scop
   const busyRun = await fixture.byName('automation_run').execute({ id: 'busy' }, fixture.exec)
   assert.equal(busyRun.ok, false)
   assert.match(busyRun.error, /queued or running run/)
+})
+
+test('pinned create requires durable target confirmation and update rejects target mutation', async () => {
+  const fixture = setup()
+  const create = fixture.byName('automation_create')
+  const result = await create.execute({
+    name: 'Pinned', prompt: 'Continue.', once_at: '2026-03-21T00:00:00.000Z',
+    permission_preset: 'read-only', execution_mode: 'pinned-session', target_session_id: 'target',
+    session_target_confirmed: true, creation_confirmed: true,
+  }, fixture.exec)
+  assert.equal(result.ok, true)
+  const update = await fixture.byName('automation_update').execute({ id: 'automation-task', execution_mode: 'pinned-session', target_session_id: 'other', session_target_confirmed: true }, fixture.exec)
+  assert.equal(update.ok, false)
+  assert.match(update.error, /target changes are unsupported/)
 })

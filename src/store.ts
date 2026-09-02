@@ -56,7 +56,7 @@ export class AutomationStore {
     }
     const parsed = AutomationStateSchema.safeParse(value)
     if (!parsed.success) throw new Error(`Automation state is invalid: ${parsed.error.message}`)
-    this.state = parsed.data
+    this.state = normalizeState(parsed.data)
   }
 
   snapshot(): AutomationState {
@@ -78,4 +78,12 @@ export class AutomationStore {
     this.tail = run.then(() => undefined, () => undefined)
     return run
   }
+}
+
+function normalizeState(state: AutomationState): AutomationState {
+  for (const task of Object.values(state.tasks)) {
+    task.execution.target ??= { mode: 'fresh' }
+    for (const run of task.runs) run.executionTarget ??= { mode: 'fresh' }
+  }
+  return state
 }

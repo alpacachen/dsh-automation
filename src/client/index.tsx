@@ -833,6 +833,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
               const displayStatus = busy ? 'running' : task.status
               const latestResult = [...task.runs].reverse().find((run) => run.summary !== undefined)
               const latestSession = [...task.runs].reverse().find((run) => run.sessionId !== undefined)?.sessionId
+                ?? (task.execution.target?.mode === 'pinned-session' ? task.execution.target.sessionId : undefined)
               return (
                 <article key={task.id} className={`automation-task-card ${statusClass(displayStatus)}`}>
                   <div className="automation-task-accent" />
@@ -859,6 +860,12 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                     <div className="automation-fact">
                       <Icon name="folder" />
                       <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
+                    </div>
+                    <div className="automation-fact">
+                      <Icon name="external" />
+                      <span><b>Execution destination</b>{task.execution.target?.mode === 'pinned-session'
+                        ? `Continue existing session · ${task.execution.target.sessionId.slice(0, 12)}… · fallback: fail`
+                        : 'New session for every run'}</span>
                     </div>
                     <div className="automation-fact">
                       <Icon name="shield" />

@@ -10,6 +10,7 @@ import { AutomationController } from './controller.js'
 import { registerAutomationTools } from './tools.js'
 import { registerAutomationApi } from './api.js'
 import { AgentConfiguration } from './agent-configuration.js'
+import { unattendedAgents, pendingUnattendedSessionIds } from './runtime-marker.js'
 
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-host-webserver'
@@ -67,7 +68,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const toolCleanups = new Map<Agent, () => void>()
 
   const installTools = (agent: Agent) => {
-    if (agent.id.startsWith('automation-') || toolCleanups.has(agent)) return
+    if (agent.id.startsWith('automation-') || pendingUnattendedSessionIds.has(agent.id) || unattendedAgents.has(agent) || toolCleanups.has(agent)) return
     const dispose = registerAutomationTools(ctx, agent.ctx, agent, controller)
     toolCleanups.set(agent, dispose)
   }

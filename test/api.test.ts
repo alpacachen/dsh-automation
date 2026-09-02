@@ -78,6 +78,12 @@ test('HTTP API rejects cross-origin, unconfirmed, partial and unknown nested upd
   ]) {
     assert.equal((await invoke(route, 'PATCH', '/api/automation/v1/tasks/task', JSON.stringify(body), headers)).status, 400)
   }
+  const pinned = await invoke(route, 'PATCH', '/api/automation/v1/tasks/task', JSON.stringify({
+    execution: { target: { mode: 'pinned-session', sessionId: 's', workspaceId: 'w', cwd: '/w', fallback: 'fail' } },
+    confirmSessionTargetChange: true,
+  }), headers)
+  assert.equal(pinned.status, 400)
+  assert.equal(pinned.value.error, 'Pinned session target changes are unsupported via REST in MVP.')
   assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task/resume', '{"runNow":"yes"}', headers)).status, 400)
   assert.equal((await invoke(route, 'PUT', '/api/automation/v1/tasks/task', undefined, headers)).status, 405)
   assert.equal((await invoke(route, 'GET', '/api/automation/v1/unknown')).status, 404)

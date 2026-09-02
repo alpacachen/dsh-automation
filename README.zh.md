@@ -4,7 +4,7 @@
 
 ### 在 DSH 里，用一句话安排未来的 Agent 工作。
 
-支持单次与周期任务。每次运行都会创建一个全新、可见的 DSH 会话。
+支持单次与周期任务。默认每次运行创建全新可见会话，也可在明确确认后固定到持久化会话；目标失败时不会静默回退。
 
 [![npm version](https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm)](https://www.npmjs.com/package/@alpacachen/dsh-automation)
 ![DeepSeek Harness Plugin](https://img.shields.io/badge/DeepSeek%20Harness-Plugin-7c5cff)
@@ -24,6 +24,7 @@
 - 👀 **过程可见**：结果摘要、耗时、错误、运行历史和会话入口集中展示。
 - 🛡️ **权限可控**：每个任务可选择 DSH Host 当前提供的任意权限预设。
 - 🤖 **执行可选**：可选定 Agent 预设、提供商/模型组合和有序技能。
+- 📌 **继续已有对话（MVP）**：`automation_create` 只能把当前 Agent 对话固定到经 Host 持久化检查的会话，并且必须明确确认目标和完整创建预览。不支持 REST 修改目标或任意会话选择器；固定运行只恢复精确目标，失败不会创建替代会话；有可用入口时显示「打开对话」。
 - 🧭 **引导创建**：使用结果导向模板，或通过对话补齐必要信息。
 - 🎛️ **随时管理**：编辑、立即运行、暂停、恢复或删除任务。
 
@@ -83,7 +84,7 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 ## ⏱️ 运行方式
 
 ```text
-计划到期 → 进入全局队列 → 创建新会话 → Agent 执行 → 记录结果与会话入口
+计划到期 → 进入全局队列 → 新建或恢复固定持久化会话 → Agent 执行 → 记录结果与会话入口
 ```
 
 - 所有自动化全局串行执行，不会互相重叠。

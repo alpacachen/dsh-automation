@@ -4,15 +4,18 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { AutomationRun, AutomationTask } from './types.js'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { AutomationRunner, AutomationRunnerResult, AutomationRunCancelReason } from './scheduler.js'
 import { AgentConfiguration } from './agent-configuration.js'
+import { unattendedAgents, pendingUnattendedSessionIds } from './runtime-marker.js'
 
 import '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-permission-presets'
 import '@deepseek-ai/dsh-session-title'
 import '@deepseek-ai/dsh-workspace'
+
+type PersistedSessionInspector = { inspect(id: SessionId): Promise<{ meta: { id: SessionId; cwd?: string } }> }
 
 const RUN_SUMMARY_MAX_CHARS = 500
 
@@ -86,8 +89,17 @@ export class DshAutomationRunner implements AutomationRunner {
       cancelValidation?: () => void
     } = {}
     this.active.set(run.id, active)
-    const sessionId = SessionId(run.sessionId ?? `automation-${randomUUID()}`)
-    let handle: Awaited<ReturnType<Context['agents']['create']>> | undefined
+    const configuredTarget = task.execution.target ?? { mode: 'fresh' as const }
+    const pinned = (run.executionTarget?.mode ?? configuredTarget.mode) === 'pinned-session'
+    const target = pinned && configuredTarget.mode === 'pinned-session'
+      ? { ...configuredTarget, sessionId: run.executionTarget?.sessionId ?? configuredTarget.sessionId }
+      : undefined
+    if (pinned && target === undefined) throw new Error('target_resume_failed: pinned target snapshot is unavailable.')
+    if (pinned && run.sessionId !== undefined && run.sessionId !== target?.sessionId) {
+      throw new Error('target_resume_failed: run target snapshot does not match its session id.')
+    }
+    const sessionId = SessionId(pinned ? target!.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
+    let handle: AgentHandle | undefined
     let keepSessionLive = false
     try {
       const canceledDuringValidation = new Promise<never>((_resolve, reject) => {
@@ -95,32 +107,47 @@ export class DshAutomationRunner implements AutomationRunner {
       })
       // Older state could capture provider/model independently. Preserve that
       // runtime behavior while new create/update requests require a complete pair.
+      const validationExecution = pinned
+        ? { ...task.execution, agentPreset: undefined, provider: undefined, model: undefined, skills: [] }
+        : task.execution
       await Promise.race([
-        this.agentConfiguration.validate(task.execution, task.security.permissionPreset, { allowLegacyPartialModel: true }),
+        this.agentConfiguration.validate(validationExecution, task.security.permissionPreset, { allowLegacyPartialModel: true }),
         canceledDuringValidation,
       ])
-      const workspace =
-        this.ctx.workspaceRegistry.get(WorkspaceId(task.execution.workspaceId)) ??
-        (await this.ctx.workspaceRegistry.create(task.execution.cwd))
-      handle = await this.ctx.agents.create({
-        sessionId,
-        meta: {
-          cwd: workspace.path,
-          ...(task.execution.agentPreset === undefined ? {} : { agentPreset: task.execution.agentPreset }),
-        },
-        agentOptions: {
-          ...(task.execution.provider === undefined ? {} : { provider: task.execution.provider }),
-          ...(task.execution.model === undefined ? {} : { model: task.execution.model }),
-        },
-        setup: async (agentCtx) => {
-          await this.ctx.agentPresets.mount(agentCtx, task.execution.agentPreset)
-        },
-      })
+      const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(target?.workspaceId ?? task.execution.workspaceId))
+        ?? (pinned ? undefined : await this.ctx.workspaceRegistry.create(task.execution.cwd))
+      if (workspace === undefined) throw new Error('target_workspace_mismatch: target workspace is unavailable.')
+      if (target !== undefined && workspace.path !== target.cwd) throw new Error('target_workspace_mismatch: target cwd does not match.')
+      if (pinned) {
+        pendingUnattendedSessionIds.add(sessionId)
+        const persistence = (this.ctx as Context & { sessionPersistence?: PersistedSessionInspector }).sessionPersistence
+        if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
+        let inspection: { meta: { id: SessionId; cwd?: string } }
+        try { inspection = await persistence.inspect(sessionId) } catch { throw new Error('target_session_not_found: pinned session could not be resolved.') }
+        if (inspection.meta.id !== sessionId) throw new Error('target_session_not_found: pinned session could not be resolved.')
+        if (inspection.meta.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match.')
+        handle = await this.ctx.agents.resume({ resumeSessionId: sessionId })
+        pendingUnattendedSessionIds.delete(sessionId)
+      } else {
+        handle = await this.ctx.agents.create({
+          sessionId,
+          meta: { cwd: workspace.path, ...(task.execution.agentPreset === undefined ? {} : { agentPreset: task.execution.agentPreset }) },
+          agentOptions: {
+            ...(task.execution.provider === undefined ? {} : { provider: task.execution.provider }),
+            ...(task.execution.model === undefined ? {} : { model: task.execution.model }),
+          },
+          setup: async (agentCtx) => { await this.ctx.agentPresets.mount(agentCtx, task.execution.agentPreset) },
+        })
+      }
+      if (handle === undefined) throw new Error('target_resume_failed: unable to create agent runtime.')
       active.agent = handle.agent
+      if (pinned) unattendedAgents.add(handle.agent)
+      if (pinned && handle.agent.session.header.id !== sessionId) throw new Error('target_session_not_found: resumed session id does not match target.')
+      if (pinned && handle.agent.session.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: resumed session cwd does not match.')
+      if (pinned && handle.agent.status !== 'idle') throw new Error('target_session_busy: target session is busy.')
       this.ctx.permissionPresets.set(handle.agent.session, task.security.permissionPreset)
-      const selectedSkills = await Promise.race([
-        this.agentConfiguration.loadSelectedSkills(handle.agent, task),
-        canceledDuringValidation,
+      const selectedSkills = pinned ? [] : await Promise.race([
+        this.agentConfiguration.loadSelectedSkills(handle.agent, task), canceledDuringValidation,
       ])
       delete active.cancelValidation
       for (const skill of selectedSkills) {
@@ -129,12 +156,14 @@ export class DshAutomationRunner implements AutomationRunner {
           source: skill.source,
         }))
       }
-      this.ctx.sessionTitle.rename(handle.agent.session, titleFor(task, run))
-      await this.ctx.sessions.flush(handle.agent.session)
-      await workspace.attachSession(sessionId)
+      if (!pinned) {
+        this.ctx.sessionTitle.rename(handle.agent.session, titleFor(task, run))
+        await this.ctx.sessions.flush(handle.agent.session)
+        await workspace.attachSession(sessionId)
+      }
 
       if (active.cancelReason !== undefined) {
-        keepSessionLive = true
+        keepSessionLive = !pinned
         return { status: 'failed', sessionId, error: `Automation run canceled before execution: ${active.cancelReason}.` }
       }
 
@@ -168,11 +197,13 @@ export class DshAutomationRunner implements AutomationRunner {
       }
       // The owner fiber disposes this handle on plugin shutdown. Disposing it here
       // emits session/removed, so the sidebar drops the new persisted session.
-      keepSessionLive = true
+      keepSessionLive = !pinned
       return result
     } finally {
       delete active.cancelValidation
       this.active.delete(run.id)
+      if (handle !== undefined) unattendedAgents.delete(handle.agent)
+      pendingUnattendedSessionIds.delete(sessionId)
       if (handle !== undefined && !keepSessionLive) await handle.dispose()
     }
   }
