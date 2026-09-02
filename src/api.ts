@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from './controller.js'
-import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type UpdateAutomationRequest } from './types.js'
+import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
 
@@ -45,7 +45,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 function parseUpdate(body: Record<string, unknown>, currentPermission: string): UpdateAutomationRequest {
-  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution'].includes(key))) {
+  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution', 'confirmSessionTargetChange'].includes(key))) {
     throw new Error('Update body contains an unknown field.')
   }
   if (body.name !== undefined && typeof body.name !== 'string') throw new Error('name must be a string.')
@@ -60,6 +60,7 @@ function parseUpdate(body: Record<string, unknown>, currentPermission: string): 
     throw new Error('confirmPermissionChange must be true when changing permissions.')
   }
   const execution = parseExecutionPatch(body.execution)
+  if (execution?.target !== undefined) throw new Error('Pinned session target changes are unsupported via REST in MVP.')
   return {
     ...(body.name === undefined ? {} : { name: body.name as string }),
     ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
@@ -77,7 +78,7 @@ function parseExecutionPatch(value: unknown): UpdateAutomationRequest['execution
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('execution must be an object.')
   const input = value as Record<string, unknown>
   if (Object.keys(input).length === 0) throw new Error('execution must contain at least one field.')
-  if (Object.keys(input).some((key) => !['agentPreset', 'provider', 'model', 'skills'].includes(key))) {
+  if (Object.keys(input).some((key) => !['agentPreset', 'provider', 'model', 'skills', 'target'].includes(key))) {
     throw new Error('execution contains an unknown field.')
   }
   const nullableString = (key: 'agentPreset' | 'provider' | 'model') => {
@@ -96,11 +97,20 @@ function parseExecutionPatch(value: unknown): UpdateAutomationRequest['execution
     throw new Error('execution.skills must be an array of strings.')
   }
   const skills = input.skills as string[] | undefined
+  let target: AutomationExecutionTarget | undefined
+  if (input.target !== undefined) {
+    if (typeof input.target !== 'object' || input.target === null || Array.isArray(input.target)) throw new Error('execution.target must be an object.')
+    const value = input.target as Record<string, unknown>
+    if (value.mode === 'fresh') target = { mode: 'fresh' as const }
+    else if (value.mode === 'pinned-session' && typeof value.sessionId === 'string' && typeof value.workspaceId === 'string' && typeof value.cwd === 'string' && value.fallback === 'fail') target = { mode: 'pinned-session' as const, sessionId: value.sessionId, workspaceId: value.workspaceId, cwd: value.cwd, fallback: 'fail' as const }
+    else throw new Error('execution.target is invalid.')
+  }
   return {
     ...(agentPreset === undefined ? {} : { agentPreset }),
     ...(provider === undefined ? {} : { provider }),
     ...(model === undefined ? {} : { model }),
     ...(skills === undefined ? {} : { skills }),
+    ...(target === undefined ? {} : { target, sessionTargetConfirmed: true as const }),
   }
 }
 

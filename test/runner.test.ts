@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { DshAutomationRunner } from '../src/runner.js'
 import type { AutomationRun, AutomationTask } from '../src/types.js'
 
@@ -43,6 +44,14 @@ const run: AutomationRun = {
   status: 'running',
 }
 
+const pinnedTask: AutomationTask = {
+  ...task,
+  execution: {
+    ...task.execution,
+    target: { mode: 'pinned-session', sessionId: 'target-session', workspaceId: 'workspace-test', cwd: '/tmp/workspace', fallback: 'fail' },
+  },
+}
+
 function fakeContext(
   reason: { kind: string; error?: { message: string } } = { kind: 'completed' },
   assistantText?: string,
@@ -50,6 +59,8 @@ function fakeContext(
   const order: string[] = []
   const messages: unknown[] = []
   const createdIds: string[] = []
+  const resumedIds: string[] = []
+  let resuming = false
   let disposed = 0
   const workspace = {
     id: 'workspace-test',
@@ -77,18 +88,23 @@ function fakeContext(
       rename(_session: unknown, title: string) { order.push(`title:${title}`) },
     },
     sessions: {
+      get() { return undefined },
       async flush() { order.push('flush') },
+    },
+    sessionPersistence: {
+      async inspect(id: SessionId) { return { meta: { id, cwd: '/tmp/workspace' } } },
     },
     agents: {
       async create(options: { sessionId: string; setup?: (ctx: Context) => Promise<void> }) {
-        createdIds.push(options.sessionId)
+        if (!resuming) createdIds.push(options.sessionId)
         await options.setup?.({} as Context)
         const events: Array<Record<string, unknown>> = []
-        const session = { events }
+        const session = { header: { id: SessionId(options.sessionId), cwd: '/tmp/workspace' }, events }
         return {
           agent: {
             ctx: {},
             session,
+            status: 'idle',
             inject(message: unknown) { order.push('inject'); messages.push(message) },
             followup(message: unknown) {
               order.push('followup')
@@ -115,9 +131,14 @@ function fakeContext(
           async dispose() { disposed += 1; order.push('dispose') },
         }
       },
+      async resume(options: { resumeSessionId: string }) {
+        resumedIds.push(options.resumeSessionId)
+        resuming = true
+        try { return await this.create({ sessionId: options.resumeSessionId }) } finally { resuming = false }
+      },
     },
   } as unknown as Context
-  return { ctx, order, messages, createdIds, disposed: () => disposed, workspace }
+  return { ctx, order, messages, createdIds, resumedIds, disposed: () => disposed, workspace }
 }
 
 test('runner keeps a completed session live for immediate sidebar visibility', async () => {
@@ -132,6 +153,64 @@ test('runner keeps a completed session live for immediate sidebar visibility', a
   assert.ok(fake.order.indexOf('attach') < fake.order.indexOf('followup'))
   assert.match(JSON.stringify(fake.messages[0]), /Review the project and report findings/)
   assert.match(fake.order.find((entry) => entry.startsWith('title:')) ?? '', /^title:\[Automation\]/)
+})
+
+test('pinned runner resumes the exact target without creating or reinjecting skills', async () => {
+  const fake = fakeContext()
+  const result = await new DshAutomationRunner(fake.ctx).run({ ...pinnedTask, execution: { ...pinnedTask.execution, skills: ['never-reinject'] } }, {
+    ...run, executionTarget: { mode: 'pinned-session', sessionId: 'target-session' }, sessionId: 'target-session',
+  })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(fake.resumedIds, ['target-session'])
+  assert.deepEqual(fake.createdIds, [])
+  assert.equal(fake.messages.filter((message) => JSON.stringify(message).includes('skill_content')).length, 0)
+  assert.equal(fake.disposed(), 1)
+})
+
+test('pinned runner fails without fresh fallback when resume fails', async () => {
+  const fake = fakeContext()
+  fake.ctx.agents.resume = async () => { throw new Error('missing persisted session') }
+  await assert.rejects(() => new DshAutomationRunner(fake.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), /missing persisted session/)
+  assert.deepEqual(fake.createdIds, [])
+})
+
+test('pinned runner rejects busy or mismatched workspace targets', async () => {
+  const busy = fakeContext()
+  busy.ctx.agents.resume = async () => {
+    const handle = await busy.ctx.agents.create({ sessionId: SessionId('target-session') })
+    Object.defineProperty(handle.agent, 'status', { value: 'running' })
+    return handle
+  }
+  await assert.rejects(() => new DshAutomationRunner(busy.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), /target_session_busy/)
+  assert.equal(busy.disposed(), 1)
+
+  const mismatch = fakeContext()
+  ;(mismatch.ctx as Context & { sessionPersistence: { inspect(id: SessionId): Promise<{ meta: { id: SessionId; cwd?: string } }> } }).sessionPersistence.inspect = async (id: SessionId) => ({ meta: { id, cwd: '/other' } })
+  await assert.rejects(() => new DshAutomationRunner(mismatch.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), /target_workspace_mismatch/)
+})
+
+test('pinned cancellation disposes only the temporary resumed handle', async () => {
+  const fake = fakeContext()
+  let releaseIdle!: () => void
+  let idleStarted!: () => void
+  const started = new Promise<void>((resolve) => { idleStarted = resolve })
+  const gate = new Promise<void>((resolve) => { releaseIdle = resolve })
+  fake.ctx.agents.resume = async (options) => {
+    const handle = await fake.ctx.agents.create({ sessionId: options.resumeSessionId })
+    handle.agent.whenIdle = async () => { idleStarted(); await gate }
+    handle.agent.cancel = () => {
+      ;(handle.agent.session.events as unknown as Array<Record<string, unknown>>).push({ type: 'turn/end', seq: 1, time: Date.now(), data: { turn: 1, reason: { kind: 'aborted' } } })
+      releaseIdle()
+    }
+    return handle
+  }
+  const runner = new DshAutomationRunner(fake.ctx)
+  const pending = runner.run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } })
+  await started
+  assert.equal(runner.cancel(run.id, 'manual'), true)
+  const result = await pending
+  assert.equal(result.status, 'failed')
+  assert.equal(fake.disposed(), 1)
 })
 
 test('runner applies each task permission preset before execution', async () => {

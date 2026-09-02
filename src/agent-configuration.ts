@@ -77,7 +77,7 @@ export class AgentConfiguration {
   }
 
   async validate(
-    execution: AutomationExecution,
+    execution: Omit<AutomationExecution, 'target'> & { target?: AutomationExecution['target'] },
     permissionPreset: string,
     options: { readonly allowLegacyPartialModel?: boolean } = {},
   ): Promise<void> {

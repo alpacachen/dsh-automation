@@ -45,7 +45,7 @@ test('legacy tasks gain skills in memory without startup rewrite', async (t) => 
         id: 'old', name: 'Old', prompt: 'Run.', createdAt: '2026-03-20T00:00:00.000Z', createdBySessionId: 'creator', status: 'active',
         schedule: { kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }, nextRunAt: '2026-03-21T00:00:00.000Z',
         execution: { workspaceId: 'workspace', cwd: '/tmp/workspace', agentPreset: 'standard' },
-        security: { permissionPreset: 'read-only', source: 'plugin-default', grantedAt: '2026-03-20T00:00:00.000Z' }, runs: [],
+        security: { permissionPreset: 'read-only', source: 'plugin-default', grantedAt: '2026-03-20T00:00:00.000Z' }, runs: [{ id: 'old-run', trigger: 'manual', enqueuedAt: '2026-03-20T00:00:00.000Z', status: 'succeeded' }],
       },
     },
   }
@@ -54,6 +54,8 @@ test('legacy tasks gain skills in memory without startup rewrite', async (t) => 
   const store = new AutomationStore(path)
   await store.init()
   assert.deepEqual(store.snapshot().tasks.old?.execution.skills, [])
+  assert.deepEqual(store.snapshot().tasks.old?.execution.target, { mode: 'fresh' })
+  assert.deepEqual(store.snapshot().tasks.old?.runs[0]?.executionTarget, { mode: 'fresh' })
   assert.equal(await readFile(path, 'utf8'), original)
   await store.mutate(() => undefined)
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')).tasks.old.execution.skills, [])

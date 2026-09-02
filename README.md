@@ -4,7 +4,7 @@
 
 ### Schedule future Agent work in DSH with one sentence.
 
-Run one-time or recurring tasks. Every run opens a fresh, visible DSH session.
+Run one-time or recurring tasks. Runs use a fresh visible session by default, or a confirmed pinned persisted session with no fresh fallback.
 
 [![npm version](https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm)](https://www.npmjs.com/package/@alpacachen/dsh-automation)
 ![DeepSeek Harness Plugin](https://img.shields.io/badge/DeepSeek%20Harness-Plugin-7c5cff)
@@ -24,6 +24,7 @@ Run one-time or recurring tasks. Every run opens a fresh, visible DSH session.
 - 👀 **Stay informed** — see result summaries, duration, errors, history, and session links in one place.
 - 🛡️ **Limit access** — choose any permission preset advertised by the DSH Host for each task.
 - 🤖 **Choose execution** — optionally pin an Agent preset, provider/model pair, and ordered skills.
+- 📌 **Continue a conversation (MVP)** — `automation_create` may pin only the current Agent conversation to a persisted session after explicit target and creation confirmation. The target is checked by the Host persistence API; REST target changes and arbitrary session pickers are unsupported. Pinned runs resume exactly, never create a replacement, and show an **Open conversation** link when available.
 - 🧭 **Start with guidance** — use outcome-focused templates or a guided creation conversation.
 - 🎛️ **Stay in control** — edit, run, pause, resume, or delete tasks from the UI.
 
@@ -83,7 +84,7 @@ You can also stop after a number of runs or on a date. Use **Advanced RRULE** fo
 ## ⏱️ How runs work
 
 ```text
-Schedule due → Global queue → Fresh session → Agent runs → Result and session link recorded
+Schedule due → Global queue → Fresh or pinned persisted session → Agent runs → Result and session link recorded
 ```
 
 - Automations run globally one at a time and never overlap.

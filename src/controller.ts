@@ -135,6 +135,7 @@ function normalizedSkills(skills: readonly string[]): string[] {
 function normalizedExecution(execution: AutomationTask['execution']): AutomationTask['execution'] {
   return {
     ...execution,
+    target: execution.target ?? { mode: 'fresh' },
     ...(execution.agentPreset === undefined ? {} : { agentPreset: execution.agentPreset.trim() }),
     ...(execution.provider === undefined ? {} : { provider: execution.provider.trim() }),
     ...(execution.model === undefined ? {} : { model: execution.model.trim() }),

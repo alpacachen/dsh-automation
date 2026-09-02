@@ -1,13 +1,15 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { JsonValue } from '@deepseek-ai/dsh-session'
+import { SessionId, type JsonValue } from '@deepseek-ai/dsh-session'
 import type { AutomationController } from './controller.js'
 import type { AutomationSchedule, AutomationTaskView } from './types.js'
 import { AgentConfiguration } from './agent-configuration.js'
 
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-workspace'
+
+type PersistedSessionInspector = { inspect(id: SessionId): Promise<{ meta: { id: SessionId; cwd?: string } }> }
 
 const ERROR_SCHEMA = {
   type: 'object',
@@ -205,6 +207,9 @@ export function registerAutomationTools(
       model: { type: 'string', description: 'Model override; must be supplied with provider.' },
       skills: { type: 'array', items: { type: 'string' }, description: 'Ordered user-invocable skill names to preload. Defaults to none.' },
       permission_preset: { type: 'string', required: true, description: 'Confirmed Host permission preset id for every run.' },
+      execution_mode: { type: 'string', enum: ['fresh', 'pinned-session'], description: 'Execution destination; defaults to fresh.' },
+      target_session_id: { type: 'string', description: 'Persisted target session id for pinned-session mode.' },
+      session_target_confirmed: { type: 'boolean', description: 'Must be true after the target session preview is confirmed.' },
       creation_confirmed: { type: 'boolean', required: true, description: 'Must be true only after the user explicitly confirms the complete creation preview.' },
     },
     output: { schema: ACTION_SCHEMA, render },
@@ -218,6 +223,19 @@ export function registerAutomationTools(
         if ((args.provider === undefined) !== (args.model === undefined)) throw new Error('provider and model must be supplied together.')
         const capturedProvider = args.provider ?? agent.options.provider
         const capturedModel = args.model ?? agent.options.model
+        const mode = args.execution_mode ?? 'fresh'
+        if (mode === 'pinned-session' && args.target_session_id === undefined) throw new Error('target_session_id is required for pinned-session mode.')
+        if (mode === 'pinned-session' && args.session_target_confirmed !== true) throw new Error('Explicit user confirmation is required for a pinned session target.')
+        if (mode === 'pinned-session') {
+          const targetSessionId = args.target_session_id
+          if (targetSessionId === undefined) throw new Error('target_session_id is required for pinned-session mode.')
+          const persistence = (rootCtx as Context & { sessionPersistence?: PersistedSessionInspector }).sessionPersistence
+          if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
+          let inspection: { meta: { id: SessionId; cwd?: string } }
+          try { inspection = await persistence.inspect(SessionId(targetSessionId)) } catch { throw new Error('target_session_not_found: pinned session could not be resolved.') }
+          if (inspection.meta.id !== SessionId(targetSessionId)) throw new Error('target_session_not_found: pinned session could not be resolved.')
+          if (inspection.meta.cwd !== cwd) throw new Error('target_workspace_mismatch: pinned session cwd does not match.')
+        }
         const task = await controller.create({
           name: args.name,
           prompt: args.prompt,
@@ -230,9 +248,11 @@ export function registerAutomationTools(
               : { agentPreset: args.agent_preset ?? rootCtx.agentPresets.composedPreset(agent.ctx)! }),
             ...(capturedProvider === undefined || capturedModel === undefined ? {} : { provider: capturedProvider, model: capturedModel }),
             skills: args.skills ?? [],
+            target: mode === 'pinned-session' ? { mode: 'pinned-session', sessionId: args.target_session_id!, workspaceId: workspace.id, cwd: workspace.path, fallback: 'fail' } : { mode: 'fresh' },
           },
           createdBySessionId: agent.id,
           permissionPreset: args.permission_preset,
+          ...(mode === 'pinned-session' ? { sessionTargetConfirmed: true as const } : {}),
           ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
           ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
         })
@@ -268,6 +288,9 @@ export function registerAutomationTools(
       skills: { type: 'array', items: { type: 'string' }, description: 'Replacement ordered selected skills; [] clears.' },
       permission_preset: { type: 'string', description: 'Replacement Host permission preset id for future runs.' },
       permission_confirmed: { type: 'boolean', description: 'Required and true only after the user explicitly confirms a permission change.' },
+      execution_mode: { type: 'string', enum: ['fresh', 'pinned-session'], description: 'Replacement execution destination.' },
+      target_session_id: { type: 'string', description: 'Replacement pinned session id.' },
+      session_target_confirmed: { type: 'boolean', description: 'Required when changing execution destination.' },
     },
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
@@ -275,6 +298,8 @@ export function registerAutomationTools(
         if (exec.agent !== agent) throw new Error('automation_update must run in its owning agent scope.')
         const schedule = updateSchedule(args)
         const current = controller.get(args.id)
+        const targetChanged = args.execution_mode !== undefined || args.target_session_id !== undefined
+        if (targetChanged) throw new Error('Pinned session target changes are unsupported in MVP; use automation_create from the current conversation.')
         if (args.permission_preset !== undefined && args.permission_preset !== current.security.permissionPreset && args.permission_confirmed !== true) {
           throw new Error('Explicit user confirmation is required to change permissions.')
         }
