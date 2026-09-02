@@ -863,9 +863,9 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
                     </div>
                     <div className="automation-fact">
                       <Icon name="external" />
-                      <span><b>Execution destination</b>{task.execution.target?.mode === 'pinned-session'
-                        ? `Continue existing session · ${task.execution.target.sessionId.slice(0, 12)}… · fallback: fail`
-                        : 'New session for every run'}</span>
+                      <span><b>{t('executionDestination')}</b>{task.execution.target?.mode === 'pinned-session'
+                        ? t('executionPinned', { sessionId: `${task.execution.target.sessionId.slice(0, 12)}…` })
+                        : t('executionFresh')}</span>
                     </div>
                     <div className="automation-fact">
                       <Icon name="shield" />
