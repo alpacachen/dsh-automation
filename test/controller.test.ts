@@ -55,6 +55,18 @@ test('controller does not wake scheduler for idempotent delete miss', async () =
   assert.equal(drives, 0)
 })
 
+test('notification discovery keeps a bot when one target catalog fails', async () => {
+  const controller = new AutomationController({} as AutomationDomain, {} as AutomationScheduler, undefined, undefined, {
+    listBots: () => [{ botId: 'ok', channel: 'Feishu' }, { botId: 'bad', channel: 'Slack' }],
+    listTargets: async (botId) => { if (botId === 'bad') throw new Error('offline'); return [{ targetId: 'room', name: 'Room' }] },
+    send: async () => undefined,
+  })
+  assert.deepEqual(await controller.notificationOptions(), { bots: [
+    { botId: 'ok', channel: 'Feishu', targets: [{ targetId: 'room', name: 'Room' }] },
+    { botId: 'bad', channel: 'Slack', targets: [] },
+  ] })
+})
+
 test('controller stops queued and running work through their owning layer', async () => {
   const calls: string[] = []
   let status: 'queued' | 'running' = 'queued'

@@ -51,6 +51,7 @@ export const AutomationSecuritySchema = z.strictObject({
 })
 
 export const NotificationPolicySchema = z.enum(['failures', 'always', 'never'])
+export const NotificationTargetSchema = z.strictObject({ botId: z.string().min(1), targetId: z.string().min(1) })
 
 export const AutomationRunSchema = z.strictObject({
   id: z.string().min(1),
@@ -61,7 +62,10 @@ export const AutomationRunSchema = z.strictObject({
   finishedAt: Instant.optional(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'interrupted', 'outcome_unknown', 'timed_out', 'canceled']),
   sessionId: z.string().min(1).optional(),
-  executionTarget: z.strictObject({ mode: z.enum(['fresh', 'pinned-session']), sessionId: z.string().min(1).optional() }).optional(),
+  executionTarget: z.discriminatedUnion('mode', [
+    z.strictObject({ mode: z.literal('fresh') }),
+    z.strictObject({ mode: z.literal('pinned-session'), sessionId: z.string().min(1), workspaceId: z.string().min(1).optional(), cwd: z.string().min(1).optional() }),
+  ]).optional(),
   summary: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
 })
@@ -78,6 +82,7 @@ export const AutomationTaskSchema = z.strictObject({
   pausedAt: Instant.optional(),
   pausedNextRunAt: Instant.optional(),
   notificationPolicy: NotificationPolicySchema.default('failures'),
+  notificationTarget: NotificationTargetSchema.optional(),
   pauseAfterConsecutiveFailures: z.boolean().default(false),
   consecutiveFailures: z.number().int().nonnegative().default(0),
   unreadNotifications: z.number().int().nonnegative().default(0),
@@ -100,6 +105,7 @@ export type AutomationExecution = Omit<z.infer<typeof AutomationExecutionSchema>
 export type AutomationSecurity = z.infer<typeof AutomationSecuritySchema>
 export type AutomationPermissionPreset = z.infer<typeof AutomationPermissionPresetSchema>
 export type NotificationPolicy = z.infer<typeof NotificationPolicySchema>
+export type NotificationTarget = z.infer<typeof NotificationTargetSchema>
 export type AutomationRun = z.infer<typeof AutomationRunSchema>
 export type AutomationTask = Omit<z.infer<typeof AutomationTaskSchema>, 'execution'> & { execution: AutomationExecution }
 export type AutomationState = Omit<z.infer<typeof AutomationStateSchema>, 'tasks'> & { tasks: Record<string, AutomationTask> }
@@ -115,6 +121,7 @@ export interface CreateAutomationRequest {
   readonly permissionPreset: AutomationPermissionPreset
   readonly sessionTargetConfirmed?: true
   readonly notificationPolicy?: NotificationPolicy
+  readonly notificationTarget?: NotificationTarget
   readonly pauseAfterConsecutiveFailures?: boolean
 }
 
@@ -123,6 +130,7 @@ export interface UpdateAutomationRequest {
   readonly prompt?: string
   readonly schedule?: AutomationSchedule
   readonly notificationPolicy?: NotificationPolicy
+  readonly notificationTarget?: NotificationTarget | null
   readonly pauseAfterConsecutiveFailures?: boolean
   readonly permissionPreset?: AutomationPermissionPreset
   readonly permissionChangeConfirmed?: true
@@ -174,6 +182,15 @@ export interface AgentConfigurationOptions {
 export interface AutomationTaskView extends AutomationTask {
   readonly running: boolean
   readonly permissionDisplayName?: string
+}
+
+export interface NotificationOptions {
+  readonly bots: readonly {
+    readonly botId: string
+    readonly channel: string
+    readonly name?: string
+    readonly targets: readonly ({ readonly targetId: string; readonly name?: string; readonly label?: string })[]
+  }[]
 }
 
 export interface ResumeOptions {

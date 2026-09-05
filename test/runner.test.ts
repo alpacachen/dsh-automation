@@ -155,6 +155,13 @@ test('runner keeps a completed session live for immediate sidebar visibility', a
   assert.match(fake.order.find((entry) => entry.startsWith('title:')) ?? '', /^title:\[Automation\]/)
 })
 
+test('notification delivery failure does not change run outcome', async () => {
+  const fake = fakeContext(undefined, 'done')
+  ;(fake.ctx as Context & { dshIm: unknown }).dshIm = { send: async () => { throw new Error('offline') } }
+  const result = await new DshAutomationRunner(fake.ctx).run({ ...task, notificationPolicy: 'always', notificationTarget: { botId: 'bot', targetId: 'room' } }, run)
+  assert.equal(result.status, 'succeeded')
+})
+
 test('pinned runner resumes the exact target without creating or reinjecting skills', async () => {
   const fake = fakeContext()
   const result = await new DshAutomationRunner(fake.ctx).run({ ...pinnedTask, execution: { ...pinnedTask.execution, skills: ['never-reinject'] } }, {

@@ -11,12 +11,19 @@ import type {
   UpdateAutomationRequest,
 } from './types.js'
 
+export interface DshImService {
+  listBots(): Promise<readonly { botId: string; channel: string }[]> | readonly { botId: string; channel: string }[]
+  listTargets(botId: string): Promise<readonly { targetId: string; [key: string]: unknown }[]>
+  send(botId: string, targetId: string, text: string): Promise<unknown>
+}
+
 export class AutomationController {
   constructor(
     readonly domain: AutomationDomain,
     readonly scheduler: AutomationScheduler,
     private readonly now: () => number = () => Date.now(),
     private readonly agentConfiguration?: AgentConfiguration,
+    private readonly dshIm?: DshImService,
   ) {}
 
   list(): AutomationTaskView[] {
@@ -66,6 +73,15 @@ export class AutomationController {
     if (this.agentConfiguration === undefined) throw new Error('Agent configuration is unavailable.')
     const task = this.domain.get(id)
     return this.agentConfiguration.options(task.execution.cwd, agentPreset === undefined ? task.execution.agentPreset : agentPreset ?? undefined)
+  }
+
+  async notificationOptions() {
+    if (this.dshIm === undefined) return { bots: [] }
+    const bots = await this.dshIm.listBots()
+    return { bots: await Promise.all(bots.map(async (bot) => {
+      try { return { ...bot, targets: await this.dshIm!.listTargets(bot.botId) } }
+      catch { return { ...bot, targets: [] } }
+    })) }
   }
 
   async delete(id: string): Promise<boolean> {

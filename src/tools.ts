@@ -48,6 +48,7 @@ const TASK_SUMMARY_SCHEMA = {
     running: { type: 'boolean', required: true },
     lastRunStatus: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
     notificationPolicy: { type: 'string', required: true },
+    notificationTarget: { oneOf: [{ type: 'object', additionalProperties: false, properties: { botId: { type: 'string', required: true }, targetId: { type: 'string', required: true } } }, { type: 'null' }], required: true },
     permissionPreset: { type: 'string', required: true },
     agentPreset: { type: 'string', required: true },
     provider: { type: 'string', required: true },
@@ -95,6 +96,7 @@ function summary(task: AutomationTaskView) {
     running: task.running,
     lastRunStatus: task.runs.at(-1)?.status ?? null,
     notificationPolicy: task.notificationPolicy,
+    notificationTarget: task.notificationTarget ?? null,
     permissionPreset: task.security.permissionPreset,
     agentPreset: task.execution.agentPreset ?? 'Host default',
     provider: task.execution.provider ?? 'Host default',
@@ -201,6 +203,7 @@ export function registerAutomationTools(
       time_zone: { type: 'string', description: 'IANA time zone for a recurring rule.' },
       start_at: { type: 'string', description: 'Recurring local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
       notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Sidebar notification policy. Defaults to failures.' },
+      notification_target: { type: 'object', additionalProperties: false, properties: { bot_id: { type: 'string', required: true }, target_id: { type: 'string', required: true } }, description: 'dsh-im destination for notifications.' },
       pause_after_failures: { type: 'boolean', description: 'Pause future scheduling after 3 consecutive failed or timed-out runs.' },
       agent_preset: { type: 'string', description: 'Host Agent preset id. Omit to capture the creating Agent preset.' },
       provider: { type: 'string', description: 'Provider override; must be supplied with model.' },
@@ -254,6 +257,7 @@ export function registerAutomationTools(
           permissionPreset: args.permission_preset,
           ...(mode === 'pinned-session' ? { sessionTargetConfirmed: true as const } : {}),
           ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
+          ...(args.notification_target === undefined ? {} : { notificationTarget: { botId: args.notification_target.bot_id, targetId: args.notification_target.target_id } }),
           ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
         })
         return {
@@ -281,6 +285,7 @@ export function registerAutomationTools(
       time_zone: { type: 'string', description: 'Replacement IANA time zone.' },
       start_at: { type: 'string', description: 'Replacement local wall clock DTSTART as YYYY-MM-DDTHH:mm:ss.' },
       notification_policy: { type: 'string', enum: ['failures', 'always', 'never'], description: 'Replacement sidebar notification policy.' },
+      notification_target: { oneOf: [{ type: 'object', additionalProperties: false, properties: { bot_id: { type: 'string', required: true }, target_id: { type: 'string', required: true } } }, { type: 'null' }], description: 'Replacement dsh-im destination, or null to clear.' },
       pause_after_failures: { type: 'boolean', description: 'Whether to pause after 3 consecutive failed or timed-out runs.' },
       agent_preset: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement Host Agent preset id, or null for Host default.' },
       provider: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement provider, or null with model to use Host default.' },
@@ -303,7 +308,7 @@ export function registerAutomationTools(
         if (args.permission_preset !== undefined && args.permission_preset !== current.security.permissionPreset && args.permission_confirmed !== true) {
           throw new Error('Explicit user confirmation is required to change permissions.')
         }
-        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined && args.permission_preset === undefined && args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.skills === undefined) {
+        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.notification_target === undefined && args.pause_after_failures === undefined && args.permission_preset === undefined && args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.skills === undefined) {
           throw new Error('Supply at least one field to update.')
         }
         const task = await controller.update(args.id, {
@@ -311,6 +316,7 @@ export function registerAutomationTools(
           ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
           ...(schedule === undefined ? {} : { schedule }),
           ...(args.notification_policy === undefined ? {} : { notificationPolicy: args.notification_policy }),
+          ...(args.notification_target === undefined ? {} : { notificationTarget: args.notification_target === null ? null : { botId: args.notification_target.bot_id, targetId: args.notification_target.target_id } }),
           ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
           ...(args.permission_preset === undefined ? {} : { permissionPreset: args.permission_preset }),
           ...(args.permission_preset === undefined || args.permission_confirmed !== true ? {} : { permissionChangeConfirmed: true as const }),

@@ -7,6 +7,7 @@ import type { AutomationRun, AutomationTask } from './types.js'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { AutomationRunner, AutomationRunnerResult, AutomationRunCancelReason } from './scheduler.js'
 import { AgentConfiguration } from './agent-configuration.js'
+import type { DshImService } from './controller.js'
 import { unattendedAgents, pendingUnattendedSessionIds } from './runtime-marker.js'
 
 import '@deepseek-ai/dsh-agent'
@@ -63,6 +64,7 @@ export class DshAutomationRunner implements AutomationRunner {
   constructor(
     private readonly ctx: Context,
     private readonly agentConfiguration = new AgentConfiguration(ctx),
+    private readonly dshIm = (ctx as Context & { dshIm?: DshImService }).dshIm,
   ) {}
 
   cancel(runId: string, reason: AutomationRunCancelReason): boolean {
@@ -90,15 +92,20 @@ export class DshAutomationRunner implements AutomationRunner {
     } = {}
     this.active.set(run.id, active)
     const configuredTarget = task.execution.target ?? { mode: 'fresh' as const }
+    const configuredPinned = configuredTarget.mode === 'pinned-session' ? configuredTarget as { mode: 'pinned-session'; sessionId: string; workspaceId: string; cwd: string; fallback: 'fail' } : undefined
+    const snapshot = run.executionTarget as { mode: string; sessionId?: string; workspaceId?: string; cwd?: string } | undefined
     const pinned = (run.executionTarget?.mode ?? configuredTarget.mode) === 'pinned-session'
-    const target = pinned && configuredTarget.mode === 'pinned-session'
-      ? { ...configuredTarget, sessionId: run.executionTarget?.sessionId ?? configuredTarget.sessionId }
+    const executionTarget = pinned && configuredPinned !== undefined
+      ? { ...configuredPinned, sessionId: snapshot?.sessionId ?? configuredPinned.sessionId, workspaceId: snapshot?.workspaceId ?? configuredPinned.workspaceId, cwd: snapshot?.cwd ?? configuredPinned.cwd }
       : undefined
-    if (pinned && target === undefined) throw new Error('target_resume_failed: pinned target snapshot is unavailable.')
-    if (pinned && run.sessionId !== undefined && run.sessionId !== target?.sessionId) {
+    if (pinned && executionTarget === undefined) throw new Error('target_resume_failed: pinned target snapshot is unavailable.')
+    if (pinned && run.sessionId !== undefined && run.sessionId !== executionTarget?.sessionId) {
       throw new Error('target_resume_failed: run target snapshot does not match its session id.')
     }
-    const sessionId = SessionId(pinned ? target!.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
+    if (pinned && snapshot?.mode === 'pinned-session' && (snapshot.workspaceId !== undefined && snapshot.workspaceId !== configuredPinned?.workspaceId || snapshot.cwd !== undefined && snapshot.cwd !== configuredPinned?.cwd)) {
+      throw new Error('target_resume_failed: run target snapshot does not match configured target.')
+    }
+    const sessionId = SessionId(pinned ? executionTarget!.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
     let handle: AgentHandle | undefined
     let keepSessionLive = false
     try {
@@ -114,10 +121,10 @@ export class DshAutomationRunner implements AutomationRunner {
         this.agentConfiguration.validate(validationExecution, task.security.permissionPreset, { allowLegacyPartialModel: true }),
         canceledDuringValidation,
       ])
-      const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(target?.workspaceId ?? task.execution.workspaceId))
+      const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(executionTarget?.workspaceId ?? task.execution.workspaceId))
         ?? (pinned ? undefined : await this.ctx.workspaceRegistry.create(task.execution.cwd))
       if (workspace === undefined) throw new Error('target_workspace_mismatch: target workspace is unavailable.')
-      if (target !== undefined && workspace.path !== target.cwd) throw new Error('target_workspace_mismatch: target cwd does not match.')
+      if (executionTarget !== undefined && workspace.path !== executionTarget.cwd) throw new Error('target_workspace_mismatch: target cwd does not match.')
       if (pinned) {
         pendingUnattendedSessionIds.add(sessionId)
         const persistence = (this.ctx as Context & { sessionPersistence?: PersistedSessionInspector }).sessionPersistence
@@ -125,7 +132,7 @@ export class DshAutomationRunner implements AutomationRunner {
         let inspection: { meta: { id: SessionId; cwd?: string } }
         try { inspection = await persistence.inspect(sessionId) } catch { throw new Error('target_session_not_found: pinned session could not be resolved.') }
         if (inspection.meta.id !== sessionId) throw new Error('target_session_not_found: pinned session could not be resolved.')
-        if (inspection.meta.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match.')
+        if (inspection.meta.cwd !== executionTarget?.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match.')
         handle = await this.ctx.agents.resume({ resumeSessionId: sessionId })
         pendingUnattendedSessionIds.delete(sessionId)
       } else {
@@ -143,7 +150,7 @@ export class DshAutomationRunner implements AutomationRunner {
       active.agent = handle.agent
       if (pinned) unattendedAgents.add(handle.agent)
       if (pinned && handle.agent.session.header.id !== sessionId) throw new Error('target_session_not_found: resumed session id does not match target.')
-      if (pinned && handle.agent.session.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: resumed session cwd does not match.')
+      if (pinned && handle.agent.session.header.cwd !== executionTarget?.cwd) throw new Error('target_workspace_mismatch: resumed session cwd does not match.')
       if (pinned && handle.agent.status !== 'idle') throw new Error('target_session_busy: target session is busy.')
       this.ctx.permissionPresets.set(handle.agent.session, task.security.permissionPreset)
       const selectedSkills = pinned ? [] : await Promise.race([
@@ -193,6 +200,13 @@ export class DshAutomationRunner implements AutomationRunner {
           sessionId,
           ...(summary === undefined ? {} : { summary }),
           error: `Automation turn ended with ${detail}.`,
+        }
+      }
+      const notificationTarget = task.notificationTarget
+      const notify = notificationTarget !== undefined && summary !== undefined && (task.notificationPolicy === 'always' || (task.notificationPolicy === 'failures' && result.status !== 'succeeded'))
+      if (notify && this.dshIm !== undefined) {
+        try { await this.dshIm.send(notificationTarget!.botId, notificationTarget!.targetId, summary!) } catch (error) {
+          this.ctx.logger?.warn?.(`automation notification failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
       // The owner fiber disposes this handle on plugin shutdown. Disposing it here

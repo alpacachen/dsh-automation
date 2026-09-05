@@ -65,7 +65,7 @@ function makeRun(trigger: AutomationRun['trigger'], now: number, scheduledAt?: n
 function snapshotTarget(execution: AutomationTask['execution']): AutomationRun['executionTarget'] {
   const target = execution.target ?? { mode: 'fresh' as const }
   return target.mode === 'pinned-session'
-    ? { mode: 'pinned-session', sessionId: target.sessionId }
+    ? { mode: 'pinned-session', sessionId: target.sessionId, workspaceId: target.workspaceId, cwd: target.cwd }
     : { mode: 'fresh' }
 }
 
@@ -144,6 +144,7 @@ export class AutomationDomain {
       schedule,
       nextRunAt: instant(first),
       notificationPolicy: request.notificationPolicy ?? 'failures',
+      ...(request.notificationTarget === undefined ? {} : { notificationTarget: request.notificationTarget }),
       pauseAfterConsecutiveFailures: request.pauseAfterConsecutiveFailures ?? false,
       consecutiveFailures: 0,
       unreadNotifications: 0,
@@ -201,6 +202,7 @@ export class AutomationDomain {
       if (name !== undefined) task.name = name
       if (prompt !== undefined) task.prompt = prompt
       if (request.notificationPolicy !== undefined) task.notificationPolicy = request.notificationPolicy
+      if (request.notificationTarget !== undefined) task.notificationTarget = request.notificationTarget ?? undefined
       if (request.pauseAfterConsecutiveFailures !== undefined) {
         task.pauseAfterConsecutiveFailures = request.pauseAfterConsecutiveFailures
       }

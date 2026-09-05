@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from './controller.js'
-import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type UpdateAutomationRequest } from './types.js'
+import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, NotificationTargetSchema, type AutomationExecutionTarget, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
 
@@ -45,7 +45,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 function parseUpdate(body: Record<string, unknown>, currentPermission: string): UpdateAutomationRequest {
-  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution', 'confirmSessionTargetChange'].includes(key))) {
+  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'notificationTarget', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution', 'confirmSessionTargetChange'].includes(key))) {
     throw new Error('Update body contains an unknown field.')
   }
   if (body.name !== undefined && typeof body.name !== 'string') throw new Error('name must be a string.')
@@ -55,6 +55,7 @@ function parseUpdate(body: Record<string, unknown>, currentPermission: string): 
   }
   const schedule = body.schedule === undefined ? undefined : AutomationScheduleSchema.parse(body.schedule)
   const notificationPolicy = body.notificationPolicy === undefined ? undefined : NotificationPolicySchema.parse(body.notificationPolicy)
+  const notificationTarget = body.notificationTarget === null ? null : body.notificationTarget === undefined ? undefined : NotificationTargetSchema.parse(body.notificationTarget)
   const permissionPreset = body.permissionPreset === undefined ? undefined : AutomationPermissionPresetSchema.parse(body.permissionPreset)
   if (permissionPreset !== undefined && permissionPreset !== currentPermission && body.confirmPermissionChange !== true) {
     throw new Error('confirmPermissionChange must be true when changing permissions.')
@@ -66,6 +67,7 @@ function parseUpdate(body: Record<string, unknown>, currentPermission: string): 
     ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
     ...(schedule === undefined ? {} : { schedule }),
     ...(notificationPolicy === undefined ? {} : { notificationPolicy }),
+    ...(notificationTarget === undefined ? {} : { notificationTarget }),
     ...(body.pauseAfterConsecutiveFailures === undefined ? {} : { pauseAfterConsecutiveFailures: body.pauseAfterConsecutiveFailures as boolean }),
     ...(permissionPreset === undefined ? {} : { permissionPreset }),
     ...(permissionPreset === undefined || body.confirmPermissionChange !== true ? {} : { permissionChangeConfirmed: true as const }),
@@ -137,6 +139,10 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
         }
         if (req.method === 'GET' && (suffix === '' || suffix === '/tasks')) {
           send(res, 200, { tasks: controller.list(), scheduler: controller.schedulerHealth() })
+          return
+        }
+        if (req.method === 'GET' && suffix === '/notification-options') {
+          send(res, 200, await controller.notificationOptions())
           return
         }
         const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop|options))?$/.exec(suffix)
