@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
+import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationSchedulerHealth, AutomationTaskView, NotificationOptions } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
 import styles from './styles.css'
@@ -261,6 +261,7 @@ function statusClass(status: string): string {
 }
 
 type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>> & {
+  notificationTarget?: AutomationTaskView['notificationTarget'] | null
   permissionPreset?: AutomationTaskView['security']['permissionPreset']
   confirmPermissionChange?: true
   execution?: AutomationExecutionPatch
@@ -306,6 +307,8 @@ function EditTaskForm({
   const [name, setName] = React.useState(task.name)
   const [prompt, setPrompt] = React.useState(task.prompt)
   const [notificationPolicy, setNotificationPolicy] = React.useState(task.notificationPolicy)
+  const [notificationTarget, setNotificationTarget] = React.useState(task.notificationTarget ? `${task.notificationTarget.botId}:${task.notificationTarget.targetId}` : '')
+  const [notificationOptions, setNotificationOptions] = React.useState<NotificationOptions>()
   const [pauseAfterFailures, setPauseAfterFailures] = React.useState(task.pauseAfterConsecutiveFailures)
   const [permissionPreset, setPermissionPreset] = React.useState(task.security.permissionPreset)
   const [permissionConfirmed, setPermissionConfirmed] = React.useState(false)
@@ -316,6 +319,7 @@ function EditTaskForm({
   const [options, setOptions] = React.useState<AgentConfigurationOptions>()
   const [optionsLoading, setOptionsLoading] = React.useState(true)
   const [optionsError, setOptionsError] = React.useState<string>()
+  const [notificationOptionsError, setNotificationOptionsError] = React.useState<string>()
   const [kind, setKind] = React.useState<AutomationTaskView['schedule']['kind']>(task.schedule.kind)
   const [onceAt, setOnceAt] = React.useState(toLocalDateTime(fallbackInstant))
   const defaultMonthDay = String(Number((task.schedule.kind === 'recurring' ? task.schedule.startAt : toLocalDateTime(fallbackInstant)).slice(8, 10)))
@@ -342,7 +346,7 @@ function EditTaskForm({
   const executionChanged = agentPreset !== (task.execution.agentPreset ?? '') || modelChanged ||
     skills.join('\0') !== task.execution.skills.join('\0')
   const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged || permissionChanged ||
-    executionChanged || notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
+    executionChanged || notificationPolicy !== task.notificationPolicy || notificationTarget !== (task.notificationTarget ? `${task.notificationTarget.botId}:${task.notificationTarget.targetId}` : '') || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
   const selectedPermission = options?.permissions.find((entry) => entry.id === permissionPreset)
   const selectedProvider = options?.models.find((entry) => entry.provider === provider)
   const selectedPresetAvailable = agentPreset === '' || options?.presets.some((entry) => entry.id === agentPreset && entry.broken === undefined)
@@ -366,6 +370,9 @@ function EditTaskForm({
   }, [task.id])
 
   React.useEffect(() => { void loadOptions() }, [loadOptions])
+  React.useEffect(() => {
+    void request('/notification-options').then((value) => setNotificationOptions(value as NotificationOptions)).catch((error) => setNotificationOptionsError(error instanceof Error ? error.message : String(error)))
+  }, [])
 
   return (
     <form
@@ -382,6 +389,7 @@ function EditTaskForm({
           ...(prompt.trim() === task.prompt ? {} : { prompt }),
           ...(schedule === undefined ? {} : { schedule }),
           ...(notificationPolicy === task.notificationPolicy ? {} : { notificationPolicy }),
+          ...(notificationTarget === (task.notificationTarget ? `${task.notificationTarget.botId}:${task.notificationTarget.targetId}` : '') ? {} : { notificationTarget: notificationTarget === '' ? null : (() => { const [botId, targetId] = notificationTarget.split(':'); return { botId: botId!, targetId: targetId! } })() }),
           ...(pauseAfterFailures === task.pauseAfterConsecutiveFailures ? {} : { pauseAfterConsecutiveFailures: pauseAfterFailures }),
           ...(permissionChanged ? { permissionPreset, confirmPermissionChange: true as const } : {}),
           ...(executionChanged ? {
@@ -598,6 +606,14 @@ function EditTaskForm({
             <option value="always">{t('notificationAlways')}</option>
             <option value="never">{t('notificationNever')}</option>
           </select>
+        </label>
+        <label className="automation-field">
+          <span>{t('notificationTarget')}</span>
+          <select value={notificationTarget} onChange={(event) => setNotificationTarget(event.target.value)}>
+            <option value="">{t('notificationTargetNone')}</option>
+            {notificationOptions?.bots.flatMap((bot) => bot.targets.map((target) => <option key={`${bot.botId}:${target.targetId}`} value={`${bot.botId}:${target.targetId}`}>{bot.name ?? bot.channel} · {target.label ?? target.name ?? target.targetId}</option>))}
+          </select>
+          {notificationOptionsError !== undefined && <small>{t('optionsFailure', { error: notificationOptionsError })}</small>}
         </label>
         <label className="automation-field">
           <span>{t('pauseAfterFailures')}</span>

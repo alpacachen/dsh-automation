@@ -39,6 +39,7 @@ export const inject = [
   'workspaceRegistry',
   'sessionTitle',
   'webServer',
+  'dshIm',
 ]
 
 export interface Config {
@@ -64,7 +65,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const scheduler = new AutomationScheduler(domain, runner, undefined, (error) => {
     ctx.logger.error(`automation scheduler failed and will retry: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
   }, maxRunDurationMs)
-  const controller = new AutomationController(domain, scheduler, undefined, agentConfiguration)
+  const controller = new AutomationController(domain, scheduler, undefined, agentConfiguration, (ctx as Context & { dshIm?: import('./controller.js').DshImService }).dshIm)
   const toolCleanups = new Map<Agent, () => void>()
 
   const installTools = (agent: Agent) => {
