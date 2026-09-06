@@ -99,7 +99,13 @@ function fakeContext(
         if (!resuming) createdIds.push(options.sessionId)
         await options.setup?.({} as Context)
         const events: Array<Record<string, unknown>> = []
-        const session = { header: { id: SessionId(options.sessionId), cwd: '/tmp/workspace' }, events }
+        const session = {
+          header: { id: SessionId(options.sessionId), cwd: '/tmp/workspace' },
+          // Keep the mutable backing array for test doubles while exposing the
+          // current DSH Session snapshot API used by the runner.
+          events,
+          snapshotEvents(fromSeq?: number) { return events.slice(fromSeq ?? 0) },
+        }
         return {
           agent: {
             ctx: {},
@@ -199,7 +205,7 @@ test('pinned cancellation disposes only the temporary resumed handle', async () 
     const handle = await fake.ctx.agents.create({ sessionId: options.resumeSessionId })
     handle.agent.whenIdle = async () => { idleStarted(); await gate }
     handle.agent.cancel = () => {
-      ;(handle.agent.session.events as unknown as Array<Record<string, unknown>>).push({ type: 'turn/end', seq: 1, time: Date.now(), data: { turn: 1, reason: { kind: 'aborted' } } })
+      ;((handle.agent.session as unknown as { events: Array<Record<string, unknown>> }).events).push({ type: 'turn/end', seq: 1, time: Date.now(), data: { turn: 1, reason: { kind: 'aborted' } } })
       releaseIdle()
     }
     return handle
