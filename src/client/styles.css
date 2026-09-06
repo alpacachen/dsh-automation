@@ -1179,6 +1179,38 @@
   }
 }
 
+/* Final hierarchy overrides are kept last so the compact layout wins over legacy rules. */
+.automation-task-card .automation-task-details {
+  margin-top: 6px;
+  border-top: 0;
+}
+
+.automation-task-card .automation-task-details > summary {
+  padding: 7px 0 3px;
+}
+
+.automation-task-card .automation-details-content {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.automation-task-card .automation-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automation-task-card .automation-task-facts.is-secondary {
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.automation-editor-actions {
+  position: sticky;
+  bottom: -1px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .automation-nav-trigger,
   .automation-panel,
@@ -1187,6 +1219,154 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Minimal task hierarchy: one primary action, everything else on demand. */
+.automation-task-card.is-editing {
+  padding-bottom: 14px;
+}
+
+.automation-task-card.is-editing .automation-task-header {
+  margin-bottom: 2px;
+}
+
+.automation-task-card.is-editing .automation-editor {
+  margin-right: -2px;
+  margin-left: -2px;
+}
+
+.automation-task-header h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-task-facts {
+  align-items: center;
+}
+
+.automation-fact.is-muted,
+.automation-fact.is-muted b {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.automation-last-failure {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.automation-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.automation-button.is-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.automation-button.is-ghost:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.automation-task-details {
+  border-top: 0;
+}
+
+.automation-task-details > summary {
+  width: fit-content;
+  gap: 6px;
+  padding: 7px 0 3px;
+  font-weight: 500;
+}
+
+.automation-task-details > summary svg {
+  width: 13px;
+  height: 13px;
+}
+
+.automation-details-content {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.automation-details-content > .automation-task-facts {
+  margin-top: 0;
+}
+
+.automation-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  line-height: 18px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.automation-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.automation-secondary-actions > .automation-delete-confirm {
+  width: 100%;
+}
+
+.automation-config-disclosure {
+  margin-top: 4px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.automation-config-disclosure > summary {
+  padding: 11px 0 8px;
+}
+
+.automation-config-grid > h3.is-full {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.automation-editor > fieldset {
+  display: contents;
+}
+
+.automation-editor-heading small {
+  max-width: 42ch;
+}
+
+.automation-editor-actions {
+  position: sticky;
+  bottom: -1px;
+  margin: 12px -12px -12px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 640px) {
+  .automation-task-actions .automation-button {
+    flex: 0 1 auto;
+  }
+
+  .automation-secondary-actions {
+    align-items: stretch;
   }
 }
 
@@ -1361,4 +1541,31 @@
 .automation-history {
   margin-right: -14px;
   margin-left: -14px;
+}
+
+/* Keep the compact hierarchy above the older component defaults. */
+.automation-task-card .automation-task-details {
+  margin-top: 6px;
+  border-top: 0;
+}
+
+.automation-task-card .automation-task-details > summary {
+  padding: 7px 0 3px;
+}
+
+.automation-task-card .automation-details-content {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.automation-task-card .automation-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automation-task-card .automation-task-facts.is-secondary {
+  margin: 0;
+  padding: 9px 10px;
 }
