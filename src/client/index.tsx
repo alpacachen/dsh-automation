@@ -737,7 +737,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
     try {
       setCreatingExampleId(exampleId)
       setError(undefined)
-      const sessionId = await ctx.workspaces.connectWorkspace(workspaceId)
+      const sessionId = await ctx.sessions.create({ workspaceId })
       queueDraft(sessionId, prompt)
       ctx.sessions.open(sessionId)
       setPanelOpen(false)
