@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { AutomationRun, AutomationTask } from './types.js'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
@@ -167,7 +167,7 @@ export class DshAutomationRunner implements AutomationRunner {
         return { status: 'failed', sessionId, error: `Automation run canceled before execution: ${active.cancelReason}.` }
       }
 
-      const baseline = handle.agent.session.events.length
+      const baseline = handle.agent.session.snapshotEvents().length
       handle.agent.followup(createUserMessage({
         content: [{ type: 'text', text: promptFor(task, run) }],
         source: { kind: 'plugin', plugin: 'automation' },
@@ -175,7 +175,7 @@ export class DshAutomationRunner implements AutomationRunner {
       await handle.agent.whenIdle()
       await this.ctx.sessions.flush(handle.agent.session)
 
-      const runEvents = handle.agent.session.events.slice(baseline)
+      const runEvents = handle.agent.session.snapshotEvents(SessionLogOffset(baseline))
       const summary = finalAssistantSummary(runEvents)
       const turnEnd = runEvents
         .filter((event) => event.type === 'turn/end')

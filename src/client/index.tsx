@@ -1,7 +1,8 @@
 import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionListState, WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
@@ -634,13 +635,19 @@ function EditTaskForm({
   )
 }
 
-function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { ctx: Context }) {
+type AutomationPanelProps = OverlayProps & {
+  ctx: Context
+  useSessions: SnapshotSelectorHook<SessionListState>
+  useWorkspaces: SnapshotSelectorHook<WorkspaceListState>
+}
+
+function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelProps) {
   const open = usePanelOpen()
   const { t, locale } = useLocale()
-  const currentSessionId = useSessions((state) => state.current)
-  const workspaceId = useWorkspaces((state) => {
+  const currentSessionId = useSessions((state: SessionListState) => state.current)
+  const workspaceId = useWorkspaces((state: WorkspaceListState) => {
     if (currentSessionId !== undefined) {
-      const current = state.items.find((workspace) => workspace.sessionIds.includes(currentSessionId))
+      const current = state.items.find((workspace: WorkspaceListState['items'][number]) => workspace.sessionIds.includes(currentSessionId))
       if (current !== undefined) return current.workspaceId
     }
     return state.recentWorkspaceId
