@@ -406,8 +406,10 @@ function EditTaskForm({
           <span>{t('nameLabel')}</span>
           <input required value={name} onChange={(event) => setName(event.target.value)} />
         </label>
-        <div className="automation-config-section is-full">
-          <h3>{t('agentExecution')}</h3>
+        <details className="automation-config-disclosure is-full">
+          <summary><span>{t('agentExecution')}</span><Icon name="chevron" /></summary>
+          <div className="automation-config-section">
+            <p className="automation-section-hint">{t('editFutureRunsHint')}</p>
           {optionsError !== undefined && <p className="automation-config-error" role="alert">{t('optionsFailure', { error: optionsError })}</p>}
           {optionsLoading && <p className="automation-config-status" aria-live="polite">{t('optionsLoading')}</p>}
           <fieldset className="automation-config-grid" disabled={saving || optionsLoading}>
@@ -461,7 +463,8 @@ function EditTaskForm({
               </div>
             </div>
           </fieldset>
-        </div>
+          </div>
+        </details>
         <label className="automation-field is-full">
           <span>{t('promptLabel')}</span>
           <textarea required rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
@@ -863,33 +866,39 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                       <Icon name="clock" />
                       <span><b>{t('next')}</b>{task.nextRunAt === null ? '—' : formatDate(task.nextRunAt, locale)}</span>
                     </div>
-                    <div className="automation-fact">
-                      <Icon name="folder" />
-                      <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="external" />
-                      <span><b>{t('executionDestination')}</b>{task.execution.target?.mode === 'pinned-session'
-                        ? t('executionPinned', { sessionId: `${task.execution.target.sessionId.slice(0, 12)}…` })
-                        : t('executionFresh')}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="shield" />
-                      <span><b>{t('permission')}</b>{permissionLabel(task.security.permissionPreset, t, task.permissionDisplayName)}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="shield" />
-                      <span><b>{t('agentExecution')}</b>{task.execution.agentPreset ?? t('hostDefault')} · {task.execution.provider === undefined ? t('hostDefault') : `${task.execution.provider}/${task.execution.model}`} · {task.execution.skills.length === 0 ? t('noSelectedSkills') : task.execution.skills.join(', ')}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="shield" />
-                      <span><b>{t('notifications')}</b>{notificationPolicyLabel(task.notificationPolicy, t)}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="close" />
-                      <span><b>{t('consecutiveFailures')}</b>{task.consecutiveFailures}</span>
-                    </div>
                   </div>
+
+                  <details className="automation-task-details">
+                    <summary><span>{t('details')}</span><Icon name="chevron" /></summary>
+                    <div className="automation-task-facts is-secondary">
+                      <div className="automation-fact">
+                        <Icon name="folder" />
+                        <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="external" />
+                        <span><b>{t('executionDestination')}</b>{task.execution.target?.mode === 'pinned-session'
+                          ? t('executionPinned', { sessionId: `${task.execution.target.sessionId.slice(0, 12)}…` })
+                          : t('executionFresh')}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="shield" />
+                        <span><b>{t('permission')}</b>{permissionLabel(task.security.permissionPreset, t, task.permissionDisplayName)}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="shield" />
+                        <span><b>{t('agentExecution')}</b>{task.execution.agentPreset ?? t('hostDefault')} · {task.execution.provider === undefined ? t('hostDefault') : `${task.execution.provider}/${task.execution.model}`} · {task.execution.skills.length === 0 ? t('noSelectedSkills') : task.execution.skills.join(', ')}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="shield" />
+                        <span><b>{t('notifications')}</b>{notificationPolicyLabel(task.notificationPolicy, t)}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="close" />
+                        <span><b>{t('consecutiveFailures')}</b>{task.consecutiveFailures}</span>
+                      </div>
+                    </div>
+                  </details>
 
                   {latestResult?.summary !== undefined && (
                     <p className="automation-latest-result">
