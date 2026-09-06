@@ -11,7 +11,7 @@ function setup() {
   let disposed = 0
   const agent = {
     id: 'creator-session',
-    session: { header: { cwd: '/tmp/workspace' } },
+    session: { header: { cwd: '/tmp/workspace' }, snapshotEvents: () => [] },
     options: { provider: 'provider', model: 'model' },
     ctx: {},
   } as unknown as Agent
