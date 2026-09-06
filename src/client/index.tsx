@@ -1,8 +1,9 @@
 import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-runtime/client'
+import type { PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionListState, WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
@@ -24,7 +25,7 @@ const draftListeners = new Set<() => void>()
 let draftRevision = 0
 
 type OverlayProps = PropsRuntime<'shell.overlay'>
-type InputDockProps = any
+type InputDockProps = PropsRuntime<'conversation.input.dock'>
 type IconName = 'calendar' | 'chevron' | 'clock' | 'close' | 'edit' | 'external' | 'folder' | 'pause' | 'play' | 'plus' | 'refresh' | 'shield' | 'trash'
 
 const iconPaths: Record<IconName, string[]> = {
@@ -106,7 +107,7 @@ function consumeDraft(sessionId: SessionId): string | undefined {
   return text
 }
 
-function DraftInjector({ sessionId, inputActions }: InputDockProps & { sessionId?: SessionId }) {
+function DraftInjector({ sessionId, inputActions }: InputDockProps) {
   const revision = React.useSyncExternalStore(
     (listener) => {
       draftListeners.add(listener)
@@ -116,7 +117,6 @@ function DraftInjector({ sessionId, inputActions }: InputDockProps & { sessionId
   )
 
   React.useEffect(() => {
-    if (sessionId === undefined) return
     const text = consumeDraft(sessionId)
     if (text !== undefined) inputActions.setDraft(text)
   }, [revision, sessionId, inputActions])
@@ -635,13 +635,19 @@ function EditTaskForm({
   )
 }
 
-function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { ctx: Context & any; useSessions?: any; useWorkspaces?: any }) {
+type AutomationPanelProps = OverlayProps & {
+  ctx: Context
+  useSessions: SnapshotSelectorHook<SessionListState>
+  useWorkspaces: SnapshotSelectorHook<WorkspaceListState>
+}
+
+function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelProps) {
   const open = usePanelOpen()
   const { t, locale } = useLocale()
-  const currentSessionId = useSessions?.((state: any) => state.current)
-  const workspaceId = useWorkspaces?.((state: any) => {
+  const currentSessionId = useSessions((state: SessionListState) => state.current)
+  const workspaceId = useWorkspaces((state: WorkspaceListState) => {
     if (currentSessionId !== undefined) {
-      const current = state.items.find((workspace: any) => workspace.sessionIds.includes(currentSessionId))
+      const current = state.items.find((workspace: WorkspaceListState['items'][number]) => workspace.sessionIds.includes(currentSessionId))
       if (current !== undefined) return current.workspaceId
     }
     return state.recentWorkspaceId
@@ -1023,7 +1029,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: OverlayProps & { c
   )
 }
 
-export function apply(ctx: Context & any): () => void {
+export function apply(ctx: Context): () => void {
   const disposers = [
     installStyles(),
     installLocale(ctx),
