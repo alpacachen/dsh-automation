@@ -1,6 +1,6 @@
 import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
@@ -8,7 +8,6 @@ import { installLocale, t as translate, useLocale } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
 import styles from './styles.css'
 
-import '@deepseek-ai/dsh-client-runtime/client'
 import '@deepseek-ai/dsh-client-ui-layout/client'
 import '@deepseek-ai/dsh-client-ui-sidebar/client'
 
