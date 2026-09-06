@@ -12,6 +12,15 @@ import '@deepseek-ai/dsh-workspace'
 
 type PersistedSessionInspector = { inspect(id: SessionId): Promise<{ meta: { id: SessionId; cwd?: string } }> }
 
+function latestSessionModel(agent: Agent): { provider: string; model: string } | undefined {
+  const events = agent.session.snapshotEvents()
+  const event = [...events].reverse().find((entry) => entry.type === 'request/header')
+  if (event?.type !== 'request/header') return undefined
+  const config = event.data.header.config
+  if (typeof config.provider !== 'string' || typeof config.model !== 'string') return undefined
+  return { provider: config.provider, model: config.model }
+}
+
 const ERROR_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -222,8 +231,9 @@ export function registerAutomationTools(
         if (cwd === undefined) throw new Error('The current session has no workspace directory.')
         const workspace = await rootCtx.workspaceRegistry.create(cwd)
         if ((args.provider === undefined) !== (args.model === undefined)) throw new Error('provider and model must be supplied together.')
-        const capturedProvider = args.provider ?? agent.options.provider
-        const capturedModel = args.model ?? agent.options.model
+        const currentModel = latestSessionModel(agent)
+        const capturedProvider = args.provider ?? currentModel?.provider ?? agent.options.provider
+        const capturedModel = args.model ?? currentModel?.model ?? agent.options.model
         const mode = args.execution_mode ?? 'fresh'
         if (mode === 'pinned-session' && args.target_session_id === undefined) throw new Error('target_session_id is required for pinned-session mode.')
         if (mode === 'pinned-session' && args.session_target_confirmed !== true) throw new Error('Explicit user confirmation is required for a pinned session target.')
