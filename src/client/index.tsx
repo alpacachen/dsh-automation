@@ -200,7 +200,7 @@ function formatRunDuration(startedAt: string | undefined, finishedAt: string | u
 function scheduleLabel(task: AutomationTaskView, locale: string, t: typeof translate): string {
   if (task.schedule.kind === 'once') return `${t('once')} · ${formatDate(task.schedule.fireAt, locale)}`
   const rule = parseCommonRRule(task.schedule.rrule)
-  if (rule === undefined) return `${task.schedule.rrule} · ${task.schedule.timeZone}`
+  if (rule === undefined) return t('customSchedule')
   const interval = Number(rule.interval)
   const repeat = rule.frequency === 'DAILY'
     ? t(interval === 1 ? 'everyDay' : 'everyDays', { count: interval })
@@ -213,7 +213,8 @@ function scheduleLabel(task: AutomationTaskView, locale: string, t: typeof trans
     detail = rule.weekdays.map((day) => `${chinese ? '周' : ''}${t(WEEKDAY_KEYS[day])}`).join(chinese ? '、' : ', ')
   }
   if (rule.frequency === 'MONTHLY' && rule.monthDay) detail = t('dayOfMonth', { day: rule.monthDay })
-  return [repeat, detail, task.schedule.timeZone].filter(Boolean).join(' · ')
+  const time = task.schedule.startAt.slice(11, 16)
+  return [repeat, detail, time].filter(Boolean).join(' · ')
 }
 
 function statusLabel(status: string, t: typeof translate): string {
@@ -316,6 +317,7 @@ function EditTaskForm({
   const [options, setOptions] = React.useState<AgentConfigurationOptions>()
   const [optionsLoading, setOptionsLoading] = React.useState(true)
   const [optionsError, setOptionsError] = React.useState<string>()
+  const advancedSettingsRef = React.useRef<HTMLDetailsElement>(null)
   const [kind, setKind] = React.useState<AutomationTaskView['schedule']['kind']>(task.schedule.kind)
   const [onceAt, setOnceAt] = React.useState(toLocalDateTime(fallbackInstant))
   const defaultMonthDay = String(Number((task.schedule.kind === 'recurring' ? task.schedule.startAt : toLocalDateTime(fallbackInstant)).slice(8, 10)))
@@ -350,6 +352,13 @@ function EditTaskForm({
   const legacyPartialModelUnchanged = !modelChanged && ((task.execution.provider === undefined) !== (task.execution.model === undefined))
   const configValid = selectedPresetAvailable !== false && skillsAvailable && selectedPermission !== undefined &&
     (((provider === '') === (model === '')) || legacyPartialModelUnchanged)
+  const configurationIssues = optionsLoading || optionsError !== undefined ? [] : [
+    ...(selectedPresetAvailable === false ? [`${t('agentPreset')}: ${t('unavailable')}`] : []),
+    ...(!skillsAvailable ? [`${t('selectedSkills')}: ${t('unavailable')}`] : []),
+    ...(selectedPermission === undefined ? [`${t('permission')}: ${t('unavailable')}`] : []),
+    ...(((provider === '') !== (model === '')) && !legacyPartialModelUnchanged ? [t('selectModel')] : []),
+    ...(permissionChanged && !permissionConfirmed ? [t('confirmPermissionChange', { permission: permissionLabel(permissionPreset, t, selectedPermission?.name) })] : []),
+  ]
 
   const loadOptions = React.useCallback(async (candidate?: string) => {
     try {
@@ -370,8 +379,16 @@ function EditTaskForm({
   return (
     <form
       className="automation-editor"
+      onInvalidCapture={(event) => {
+        const advancedSettings = advancedSettingsRef.current
+        if (advancedSettings !== null && advancedSettings.contains(event.target as Node)) advancedSettings.open = true
+      }}
       onSubmit={(event) => {
         event.preventDefault()
+        if (saving || optionsLoading || optionsError !== undefined || !configValid || (permissionChanged && !permissionConfirmed)) {
+          if (advancedSettingsRef.current !== null) advancedSettingsRef.current.open = true
+          return
+        }
         const schedule: AutomationTaskView['schedule'] | undefined = !scheduleChanged
           ? undefined
           : kind === 'once'
@@ -402,66 +419,10 @@ function EditTaskForm({
         <small>{t('editFutureRunsHint')}</small>
       </div>
       <fieldset disabled={saving}>
-        <label className="automation-field">
+        <label className="automation-field is-full">
           <span>{t('nameLabel')}</span>
           <input required value={name} onChange={(event) => setName(event.target.value)} />
         </label>
-        <div className="automation-config-section is-full">
-          <h3>{t('agentExecution')}</h3>
-          {optionsError !== undefined && <p className="automation-config-error" role="alert">{t('optionsFailure', { error: optionsError })}</p>}
-          {optionsLoading && <p className="automation-config-status" aria-live="polite">{t('optionsLoading')}</p>}
-          <fieldset className="automation-config-grid" disabled={saving || optionsLoading}>
-            <label className="automation-field is-full">
-              <span>{t('agentPreset')}</span>
-              <select value={agentPreset} onChange={(event) => {
-                const value = event.target.value
-                setAgentPreset(value)
-                void loadOptions(value)
-              }}>
-                <option value="">{t('hostDefault')}</option>
-                {agentPreset !== '' && !options?.presets.some((entry) => entry.id === agentPreset) && <option value={agentPreset}>{agentPreset} · {t('unavailable')}</option>}
-                {options?.presets.map((entry) => <option key={entry.id} value={entry.id} disabled={entry.broken !== undefined}>
-                  {entry.name} · {entry.trust}{entry.broken === undefined ? '' : ` · ${t('unavailable')}`}
-                </option>)}
-              </select>
-              {agentPreset !== '' && options?.presets.find((entry) => entry.id === agentPreset)?.description !== undefined && <small>{options.presets.find((entry) => entry.id === agentPreset)!.description}</small>}
-            </label>
-            <label className="automation-field">
-              <span>{t('provider')}</span>
-              <select value={provider} onChange={(event) => {
-                const value = event.target.value
-                setProvider(value)
-                setModel('')
-              }}>
-                <option value="">{t('hostDefault')}</option>
-                {provider !== '' && !options?.models.some((entry) => entry.provider === provider) && <option value={provider}>{provider} · {t('unavailable')}</option>}
-                {options?.models.map((entry) => <option key={entry.provider} value={entry.provider}>{entry.name}</option>)}
-              </select>
-            </label>
-            <label className="automation-field">
-              <span>{t('model')}</span>
-              <select value={model} disabled={saving || optionsLoading || provider === ''} onChange={(event) => setModel(event.target.value)}>
-                <option value="">{provider === '' ? t('hostDefault') : t('selectModel')}</option>
-                {model !== '' && !selectedProvider?.models.some((entry) => entry.id === model) && <option value={model}>{model} · {t('notInCatalog')}</option>}
-                {selectedProvider?.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-              </select>
-            </label>
-            {options?.modelFailures.map((failure) => <p key={failure.provider} className="automation-config-error is-full" role="alert">{t('providerFailure', { provider: failure.provider, error: failure.error })}</p>)}
-            <div className="automation-field is-full">
-              <span>{t('selectedSkills')}</span>
-              <div className="automation-skills">
-                {[...new Set([...skills, ...(options?.skills.map((entry) => entry.name) ?? [])])].map((name) => {
-                  const option = options?.skills.find((entry) => entry.name === name)
-                  return <label key={name} className={option === undefined ? 'is-unavailable' : undefined}>
-                    <input type="checkbox" checked={skills.includes(name)} onChange={(event) => setSkills(event.target.checked ? [...skills, name] : skills.filter((entry) => entry !== name))} />
-                    <span><b>{name}</b>{option === undefined ? t('unavailable') : option.description}{option?.modelInvocable ? ` · ${t('modelInvocable')}` : ''}</span>
-                  </label>
-                })}
-                {(options?.skills.length ?? 0) === 0 && skills.length === 0 && <small>{t('noSkills')}</small>}
-              </div>
-            </div>
-          </fieldset>
-        </div>
         <label className="automation-field is-full">
           <span>{t('promptLabel')}</span>
           <textarea required rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
@@ -591,43 +552,111 @@ function EditTaskForm({
             </label>
           </>
         )}
-        <label className="automation-field">
-          <span>{t('notifications')}</span>
-          <select value={notificationPolicy} onChange={(event) => setNotificationPolicy(event.target.value as AutomationTaskView['notificationPolicy'])}>
-            <option value="failures">{t('notificationFailures')}</option>
-            <option value="always">{t('notificationAlways')}</option>
-            <option value="never">{t('notificationNever')}</option>
-          </select>
-        </label>
-        <label className="automation-field">
-          <span>{t('pauseAfterFailures')}</span>
-          <select value={pauseAfterFailures ? 'enabled' : 'disabled'} onChange={(event) => setPauseAfterFailures(event.target.value === 'enabled')}>
-            <option value="disabled">{t('disabled')}</option>
-            <option value="enabled">{t('enabled')}</option>
-          </select>
-        </label>
-        <label className="automation-field">
-          <span>{t('permission')}</span>
-          <select value={permissionPreset} disabled={optionsLoading} onChange={(event) => {
-            setPermissionPreset(event.target.value as AutomationTaskView['security']['permissionPreset'])
-            setPermissionConfirmed(false)
-          }}>
-            {!options?.permissions.some((entry) => entry.id === permissionPreset) && <option value={permissionPreset}>{permissionPreset} · {t('unavailable')}</option>}
-            {options?.permissions.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-          </select>
-          {selectedPermission !== undefined && <small>{[selectedPermission.description, `${selectedPermission.sandbox} · approval: ${selectedPermission.approval}`].filter(Boolean).join(' · ')}</small>}
-        </label>
-        {selectedPermission?.approval === 'ask' && <p className="automation-approval-warning is-full" role="alert">{t('approvalAskWarning')}</p>}
-        {permissionChanged && (
-          <label className="automation-permission-confirm is-full">
-            <input type="checkbox" checked={permissionConfirmed} onChange={(event) => setPermissionConfirmed(event.target.checked)} />
-            <span>{t('confirmPermissionChange', { permission: permissionLabel(permissionPreset, t, selectedPermission?.name) })}</span>
-          </label>
+        {optionsError !== undefined && <p className="automation-config-error is-full" role="alert">{t('optionsFailure', { error: optionsError })}</p>}
+        {optionsLoading && <p className="automation-config-status is-full" aria-live="polite">{t('optionsLoading')}</p>}
+        {options?.modelFailures.map((failure) => <p key={failure.provider} className="automation-config-error is-full" role="alert">{t('providerFailure', { provider: failure.provider, error: failure.error })}</p>)}
+        {configurationIssues.length > 0 && (
+          <div className="automation-config-error is-full" role="alert">
+            {configurationIssues.map((issue) => <p key={issue}>{issue}</p>)}
+            <button type="button" className="automation-button is-compact" onClick={() => {
+              if (advancedSettingsRef.current !== null) advancedSettingsRef.current.open = true
+            }}>{t('advancedSettings')}</button>
+          </div>
         )}
+        <details ref={advancedSettingsRef} className="automation-config-disclosure is-full">
+          <summary><span>{t('advancedSettings')}</span><Icon name="chevron" /></summary>
+          <div className="automation-config-section">
+            <p className="automation-section-hint">{t('advancedSettingsHint')}</p>
+            <fieldset className="automation-config-grid" disabled={saving || optionsLoading}>
+              <h3 className="is-full">{t('agentExecution')}</h3>
+            <label className="automation-field is-full">
+              <span>{t('agentPreset')}</span>
+              <select value={agentPreset} onChange={(event) => {
+                const value = event.target.value
+                setAgentPreset(value)
+                void loadOptions(value)
+              }}>
+                <option value="">{t('hostDefault')}</option>
+                {agentPreset !== '' && !options?.presets.some((entry) => entry.id === agentPreset) && <option value={agentPreset}>{agentPreset} · {t('unavailable')}</option>}
+                {options?.presets.map((entry) => <option key={entry.id} value={entry.id} disabled={entry.broken !== undefined}>
+                  {entry.name} · {entry.trust}{entry.broken === undefined ? '' : ` · ${t('unavailable')}`}
+                </option>)}
+              </select>
+              {agentPreset !== '' && options?.presets.find((entry) => entry.id === agentPreset)?.description !== undefined && <small>{options.presets.find((entry) => entry.id === agentPreset)!.description}</small>}
+            </label>
+            <label className="automation-field">
+              <span>{t('provider')}</span>
+              <select value={provider} onChange={(event) => {
+                const value = event.target.value
+                setProvider(value)
+                setModel('')
+              }}>
+                <option value="">{t('hostDefault')}</option>
+                {provider !== '' && !options?.models.some((entry) => entry.provider === provider) && <option value={provider}>{provider} · {t('unavailable')}</option>}
+                {options?.models.map((entry) => <option key={entry.provider} value={entry.provider}>{entry.name}</option>)}
+              </select>
+            </label>
+            <label className="automation-field">
+              <span>{t('model')}</span>
+              <select required={provider !== '' && !legacyPartialModelUnchanged} value={model} disabled={saving || optionsLoading || provider === ''} onChange={(event) => setModel(event.target.value)}>
+                <option value="">{provider === '' ? t('hostDefault') : t('selectModel')}</option>
+                {model !== '' && !selectedProvider?.models.some((entry) => entry.id === model) && <option value={model}>{model} · {t('notInCatalog')}</option>}
+                {selectedProvider?.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+              </select>
+            </label>
+            <div className="automation-field is-full">
+              <span>{t('selectedSkills')}</span>
+              <div className="automation-skills">
+                {[...new Set([...skills, ...(options?.skills.map((entry) => entry.name) ?? [])])].map((name) => {
+                  const option = options?.skills.find((entry) => entry.name === name)
+                  return <label key={name} className={option === undefined ? 'is-unavailable' : undefined}>
+                    <input type="checkbox" checked={skills.includes(name)} onChange={(event) => setSkills(event.target.checked ? [...skills, name] : skills.filter((entry) => entry !== name))} />
+                    <span><b>{name}</b>{option === undefined ? t('unavailable') : option.description}{option?.modelInvocable ? ` · ${t('modelInvocable')}` : ''}</span>
+                  </label>
+                })}
+                {(options?.skills.length ?? 0) === 0 && skills.length === 0 && <small>{t('noSkills')}</small>}
+              </div>
+            </div>
+            <label className="automation-field">
+              <span>{t('notifications')}</span>
+              <select value={notificationPolicy} onChange={(event) => setNotificationPolicy(event.target.value as AutomationTaskView['notificationPolicy'])}>
+                <option value="failures">{t('notificationFailures')}</option>
+                <option value="always">{t('notificationAlways')}</option>
+                <option value="never">{t('notificationNever')}</option>
+              </select>
+            </label>
+            <label className="automation-field">
+              <span>{t('pauseAfterFailures')}</span>
+              <select value={pauseAfterFailures ? 'enabled' : 'disabled'} onChange={(event) => setPauseAfterFailures(event.target.value === 'enabled')}>
+                <option value="disabled">{t('disabled')}</option>
+                <option value="enabled">{t('enabled')}</option>
+              </select>
+            </label>
+            <label className="automation-field is-full">
+              <span>{t('permission')}</span>
+              <select value={permissionPreset} disabled={optionsLoading} onChange={(event) => {
+                setPermissionPreset(event.target.value as AutomationTaskView['security']['permissionPreset'])
+                setPermissionConfirmed(false)
+              }}>
+                {!options?.permissions.some((entry) => entry.id === permissionPreset) && <option value={permissionPreset}>{permissionPreset} · {t('unavailable')}</option>}
+                {options?.permissions.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+              </select>
+              {selectedPermission !== undefined && <small>{[selectedPermission.description, `${selectedPermission.sandbox} · approval: ${selectedPermission.approval}`].filter(Boolean).join(' · ')}</small>}
+            </label>
+            {selectedPermission?.approval === 'ask' && <p className="automation-approval-warning is-full" role="alert">{t('approvalAskWarning')}</p>}
+            {permissionChanged && (
+              <label className="automation-permission-confirm is-full">
+                <input required type="checkbox" checked={permissionConfirmed} onChange={(event) => setPermissionConfirmed(event.target.checked)} />
+                <span>{t('confirmPermissionChange', { permission: permissionLabel(permissionPreset, t, selectedPermission?.name) })}</span>
+              </label>
+            )}
+            </fieldset>
+          </div>
+        </details>
       </fieldset>
       <div className="automation-editor-actions">
         <button type="button" className="automation-button" disabled={saving} onClick={onCancel}>{t('cancel')}</button>
-        <button type="submit" className="automation-button is-primary" disabled={saving || optionsLoading || !configValid || !changed || (permissionChanged && !permissionConfirmed)}>
+        <button type="submit" className="automation-button is-primary" disabled={saving || optionsLoading || optionsError !== undefined || !configValid || !changed || (permissionChanged && !permissionConfirmed)}>
           {saving ? t('saving') : t('saveChanges')}
         </button>
       </div>
@@ -841,63 +870,14 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
               const latestSession = [...task.runs].reverse().find((run) => run.sessionId !== undefined)?.sessionId
                 ?? (task.execution.target?.mode === 'pinned-session' ? task.execution.target.sessionId : undefined)
               return (
-                <article key={task.id} className={`automation-task-card ${statusClass(displayStatus)}`}>
-                  <div className="automation-task-accent" />
+                <article key={task.id} className={`automation-task-card ${editing ? 'is-editing' : ''}`}>
                   <header className="automation-task-header">
-                    <div className="automation-task-title">
-                      <h3>{task.name}</h3>
-                      <span className={`automation-status ${statusClass(displayStatus)}`}>
-                        <span className="automation-status-dot" />
-                        {statusLabel(displayStatus, t)}
-                      </span>
-                    </div>
-                    <span className="automation-task-id" title={task.id}>{task.id}</span>
+                    <h3>{task.name}</h3>
+                    <span className={`automation-status ${statusClass(displayStatus)}`}>
+                      <span className="automation-status-dot" />
+                      {statusLabel(displayStatus, t)}
+                    </span>
                   </header>
-
-                  <div className="automation-task-facts">
-                    <div className="automation-fact">
-                      <Icon name="calendar" />
-                      <span>{scheduleLabel(task, locale, t)}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="clock" />
-                      <span><b>{t('next')}</b>{task.nextRunAt === null ? '—' : formatDate(task.nextRunAt, locale)}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="folder" />
-                      <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="external" />
-                      <span><b>{t('executionDestination')}</b>{task.execution.target?.mode === 'pinned-session'
-                        ? t('executionPinned', { sessionId: `${task.execution.target.sessionId.slice(0, 12)}…` })
-                        : t('executionFresh')}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="shield" />
-                      <span><b>{t('permission')}</b>{permissionLabel(task.security.permissionPreset, t, task.permissionDisplayName)}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="shield" />
-                      <span><b>{t('agentExecution')}</b>{task.execution.agentPreset ?? t('hostDefault')} · {task.execution.provider === undefined ? t('hostDefault') : `${task.execution.provider}/${task.execution.model}`} · {task.execution.skills.length === 0 ? t('noSelectedSkills') : task.execution.skills.join(', ')}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="shield" />
-                      <span><b>{t('notifications')}</b>{notificationPolicyLabel(task.notificationPolicy, t)}</span>
-                    </div>
-                    <div className="automation-fact">
-                      <Icon name="close" />
-                      <span><b>{t('consecutiveFailures')}</b>{task.consecutiveFailures}</span>
-                    </div>
-                  </div>
-
-                  {latestResult?.summary !== undefined && (
-                    <p className="automation-latest-result">
-                      <b>{t('latestResult')}</b>
-                      <span>{latestResult.summary}</span>
-                    </p>
-                  )}
-
                   {editing ? (
                     <EditTaskForm
                       task={task}
@@ -907,15 +887,81 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                       onCancel={() => setEditingTaskId(undefined)}
                     />
                   ) : (
-                  <div className="automation-task-actions">
-                    <button type="button" className="automation-button is-primary" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST' })}>
-                      <Icon name="play" />{t('runNow')}
-                    </button>
-                    {busy && (
-                      <button type="button" className="automation-button is-danger" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/stop`, { method: 'POST' })}>
-                        <Icon name="close" />{t('stopRun')}
-                      </button>
-                    )}
+                    <>
+                      <div className="automation-task-facts">
+                        <div className="automation-fact">
+                          <Icon name="calendar" />
+                          <span>{scheduleLabel(task, locale, t)}</span>
+                        </div>
+                        {task.nextRunAt !== null && task.status === 'active' && (
+                          <div className="automation-fact is-muted">
+                            <span>{t('next')} · {formatDate(task.nextRunAt, locale)}</span>
+                          </div>
+                        )}
+                        {task.runs.at(-1) !== undefined && ['failed', 'timed_out', 'interrupted', 'outcome_unknown'].includes(task.runs.at(-1)!.status) && (
+                          <div className="automation-last-failure">
+                            <span className="automation-run-dot is-failed" />
+                            {t('lastRun')} · {statusLabel(task.runs.at(-1)!.status, t)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="automation-task-actions">
+                        {busy ? (
+                          <button type="button" className="automation-button is-danger" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/stop`, { method: 'POST' })}>
+                            <Icon name="close" />{t('stopRun')}
+                          </button>
+                        ) : (
+                          <button type="button" className="automation-button" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST' })}>
+                            <Icon name="play" />{t('runNow')}
+                          </button>
+                        )}
+                        <button type="button" className="automation-button is-ghost" disabled={pending} onClick={() => {
+                          setConfirmingTaskId(undefined)
+                          setEditingTaskId(task.id)
+                        }}>
+                          <Icon name="edit" />{t('edit')}
+                        </button>
+                      </div>
+                      <details className="automation-task-details">
+                        <summary><span>{t('details')}</span><Icon name="chevron" /></summary>
+                        <div className="automation-details-content">
+                          <p className="automation-prompt">{task.prompt}</p>
+                    <div className="automation-task-facts is-secondary">
+                      <div className="automation-fact">
+                        <Icon name="folder" />
+                        <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{task.execution.cwd}</code></span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="external" />
+                        <span><b>{t('executionDestination')}</b>{task.execution.target?.mode === 'pinned-session'
+                          ? t('executionPinned', { sessionId: `${task.execution.target.sessionId.slice(0, 12)}…` })
+                          : t('executionFresh')}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="shield" />
+                        <span><b>{t('permission')}</b>{permissionLabel(task.security.permissionPreset, t, task.permissionDisplayName)}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="shield" />
+                        <span><b>{t('model')}</b>{task.execution.model ?? t('hostDefault')}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="shield" />
+                        <span><b>{t('notifications')}</b>{notificationPolicyLabel(task.notificationPolicy, t)}</span>
+                      </div>
+                      <div className="automation-fact">
+                        <Icon name="close" />
+                        <span><b>{t('consecutiveFailures')}</b>{task.consecutiveFailures}</span>
+                      </div>
+                    </div>
+
+                          <div className="automation-fact is-muted"><span><b>{t('taskId')}</b><code>{task.id}</code></span></div>
+                          {task.schedule.kind === 'recurring' && <div className="automation-fact is-muted"><span><b>{t('timeZone')}</b>{task.schedule.timeZone}</span></div>}
+                          {task.schedule.kind === 'recurring' && <div className="automation-fact is-muted"><span><b>{t('recurrenceRule')}</b><code>{task.schedule.rrule}</code></span></div>}
+                          {latestResult?.summary !== undefined && (
+                            <p className="automation-latest-result"><b>{t('latestResult')}</b><span>{latestResult.summary}</span></p>
+                          )}
+                          <div className="automation-secondary-actions">
                     {task.status === 'active' && (
                       <button type="button" className="automation-button" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/pause`, { method: 'POST' })}>
                         <Icon name="pause" />{t('pause')}
@@ -936,17 +982,6 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                         <Icon name="external" />{t('openLatestSession')}
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className="automation-button"
-                      disabled={pending}
-                      onClick={() => {
-                        setConfirmingTaskId(undefined)
-                        setEditingTaskId(task.id)
-                      }}
-                    >
-                      <Icon name="edit" />{t('edit')}
-                    </button>
                     {confirming ? (
                       <div className="automation-delete-confirm" role="group" aria-label={t('deleteConfirm', { name: task.name })}>
                         <span>{t('deleteConfirm', { name: task.name })}</span>
@@ -977,9 +1012,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                         <Icon name="trash" />
                       </button>
                     )}
-                  </div>
-                  )}
-
+                          </div>
                   {task.runs.length > 0 && (
                     <details className="automation-history">
                       <summary>
@@ -1018,6 +1051,11 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                         })}
                       </ol>
                     </details>
+                  )}
+
+                        </div>
+                      </details>
+                    </>
                   )}
                 </article>
               )

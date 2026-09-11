@@ -1179,6 +1179,38 @@
   }
 }
 
+/* Final hierarchy overrides are kept last so the compact layout wins over legacy rules. */
+.automation-task-card .automation-task-details {
+  margin-top: 6px;
+  border-top: 0;
+}
+
+.automation-task-card .automation-task-details > summary {
+  padding: 7px 0 3px;
+}
+
+.automation-task-card .automation-details-content {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.automation-task-card .automation-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automation-task-card .automation-task-facts.is-secondary {
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.automation-editor-actions {
+  position: sticky;
+  bottom: -1px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .automation-nav-trigger,
   .automation-panel,
@@ -1188,4 +1220,352 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Minimal task hierarchy: one primary action, everything else on demand. */
+.automation-task-card.is-editing {
+  padding-bottom: 14px;
+}
+
+.automation-task-card.is-editing .automation-task-header {
+  margin-bottom: 2px;
+}
+
+.automation-task-card.is-editing .automation-editor {
+  margin-right: -2px;
+  margin-left: -2px;
+}
+
+.automation-task-header h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-task-facts {
+  align-items: center;
+}
+
+.automation-fact.is-muted,
+.automation-fact.is-muted b {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.automation-last-failure {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.automation-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.automation-button.is-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.automation-button.is-ghost:hover:not(:disabled) {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.automation-task-details {
+  border-top: 0;
+}
+
+.automation-task-details > summary {
+  width: fit-content;
+  gap: 6px;
+  padding: 7px 0 3px;
+  font-weight: 500;
+}
+
+.automation-task-details > summary svg {
+  width: 13px;
+  height: 13px;
+}
+
+.automation-details-content {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.automation-details-content > .automation-task-facts {
+  margin-top: 0;
+}
+
+.automation-prompt {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  line-height: 18px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.automation-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.automation-secondary-actions > .automation-delete-confirm {
+  width: 100%;
+}
+
+.automation-config-disclosure {
+  margin-top: 4px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.automation-config-disclosure > summary {
+  padding: 11px 0 8px;
+}
+
+.automation-config-grid > h3.is-full {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.automation-editor > fieldset {
+  display: contents;
+}
+
+.automation-editor-heading small {
+  max-width: 42ch;
+}
+
+.automation-editor-actions {
+  position: sticky;
+  bottom: -1px;
+  margin: 12px -12px -12px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 640px) {
+  .automation-task-actions .automation-button {
+    flex: 0 1 auto;
+  }
+
+  .automation-secondary-actions {
+    align-items: stretch;
+  }
+}
+
+/* Calm, shadcn inspired surface: quieter borders, clear hierarchy, and progressive disclosure. */
+.automation-overlay {
+  padding: 16px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-mask-1) 62%, transparent);
+}
+
+.automation-panel {
+  width: min(560px, calc(100vw - 32px));
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  box-shadow: 0 20px 50px color-mix(in srgb, var(--dsw-static-neutral-100) 14%, transparent);
+}
+
+.automation-panel-header {
+  min-height: 64px;
+  padding: 12px 14px 12px 16px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.automation-heading-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: none;
+}
+
+.automation-heading-copy h2 {
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.automation-panel-body {
+  padding: 14px;
+}
+
+.automation-task-list {
+  gap: 10px;
+}
+
+.automation-task-card {
+  padding: 14px 14px 0;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: none;
+}
+
+.automation-task-card:hover {
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--dsw-static-neutral-100) 8%, transparent);
+  transform: none;
+}
+
+.automation-task-accent {
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+}
+
+.automation-task-facts {
+  gap: 5px;
+  margin-top: 11px;
+}
+
+.automation-fact {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.automation-task-details {
+  margin-top: 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.automation-task-details summary,
+.automation-config-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 0;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  list-style: none;
+  font: var(--dsw-font-xxxs-strong-11);
+}
+
+.automation-task-details summary::-webkit-details-marker,
+.automation-config-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.automation-task-details summary svg,
+.automation-config-disclosure summary svg {
+  transition: transform 120ms ease;
+}
+
+.automation-task-details[open] summary svg,
+.automation-config-disclosure[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.automation-task-facts.is-secondary {
+  margin: 0 0 11px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.automation-editor {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: none;
+}
+
+.automation-editor-heading {
+  margin-bottom: 10px;
+}
+
+.automation-config-disclosure {
+  min-width: 0;
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.automation-config-disclosure > summary {
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.automation-config-section {
+  gap: 9px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.automation-section-hint {
+  color: var(--dsw-alias-label-caption);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.automation-field input,
+.automation-field select,
+.automation-field textarea {
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.automation-field textarea {
+  min-height: 72px;
+}
+
+.automation-task-actions {
+  margin-top: 11px;
+  padding: 10px 0 12px;
+}
+
+.automation-button {
+  min-height: 29px;
+  border-radius: 7px;
+}
+
+.automation-button.is-primary {
+  box-shadow: none;
+}
+
+.automation-history {
+  margin-right: -14px;
+  margin-left: -14px;
+}
+
+/* Keep the compact hierarchy above the older component defaults. */
+.automation-task-card .automation-task-details {
+  margin-top: 6px;
+  border-top: 0;
+}
+
+.automation-task-card .automation-task-details > summary {
+  padding: 7px 0 3px;
+}
+
+.automation-task-card .automation-details-content {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.automation-task-card .automation-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automation-task-card .automation-task-facts.is-secondary {
+  margin: 0;
+  padding: 9px 10px;
 }
