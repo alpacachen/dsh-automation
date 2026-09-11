@@ -2,81 +2,70 @@ import React from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionListState, WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
+// 仅取模块增强：ctx.slots 由 renderer 声明，useSessions/sessionId 由 ui-session 声明，
+// useWorkspaces/ctx.uiWorkspace 由 ui-workspace 声明。类型导入会被编译擦除，
+// 不会在 lib/client.js 里留下 require()。
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import {
+  Button,
+  HoverCard,
+  Input,
+  Modal,
+  Pill,
+  StateDot,
+  Tooltip,
+  IconAlarmClockOutline16,
+  IconCloseOutline16,
+  IconLoadingOutline16,
+  IconPlusOutline16,
+  IconRefreshOutline16,
+  IconSearchOutline16,
+  IconWarningOutline16,
+  type StateDotState,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import type { AutomationSchedulerHealth, AutomationTaskView } from '../types.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
-import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
+import { TaskDetail, type TaskDetailActions } from './TaskDetail.js'
+import { TaskEditor, type TaskUpdateBody } from './TaskEditor.js'
+import {
+  formatDate,
+  formatRelative,
+  statusState,
+  StatusTag,
+  IconCalendar,
+  IconShield,
+} from './shared.js'
+import {
+  clearError,
+  clearUnread,
+  consumeDraft,
+  queueDraft,
+  refresh,
+  reportError,
+  request,
+  resetStore,
+  setPanelOpen,
+  useAutomations,
+  useDraftRevision,
+  usePanelOpen,
+} from './store.js'
 import styles from './styles.css'
 
-import '@deepseek-ai/dsh-client-runtime/client'
 import '@deepseek-ai/dsh-client-ui-layout/client'
 import '@deepseek-ai/dsh-client-ui-sidebar/client'
 
-export const inject = ['slots', 'sessions', 'workspaces', 'locale']
+export const inject = ['slots', 'sessions', 'uiWorkspace', 'locale']
 
-const API = '/api/automation/v1'
 const STYLE_ATTRIBUTE = 'data-dsh-automation-style'
-let panelOpen = false
-const panelListeners = new Set<() => void>()
-let unreadCount = 0
-const unreadListeners = new Set<() => void>()
-const pendingDrafts = new Map<SessionId, string>()
-const draftListeners = new Set<() => void>()
-let draftRevision = 0
 
 type OverlayProps = PropsRuntime<'shell.overlay'>
 type InputDockProps = PropsRuntime<'conversation.input.dock'>
-type IconName = 'alert' | 'bell' | 'calendar' | 'check' | 'chevron' | 'clock' | 'close' | 'copy' | 'cpu' | 'edit' | 'external' | 'folder' | 'pause' | 'play' | 'plus' | 'refresh' | 'shield' | 'trash'
-
-const iconPaths: Record<IconName, string[]> = {
-  calendar: ['M3 9h18', 'M7 3v4', 'M17 3v4', 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z'],
-  chevron: ['m8 10 4 4 4-4'],
-  clock: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z', 'M12 6v6l4 2'],
-  close: ['M18 6 6 18', 'm6 6 12 12'],
-  edit: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'],
-  external: ['M15 3h6v6', 'm10 14 11-11', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
-  folder: ['M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z', 'M3 7V5a2 2 0 0 1 2-2h4l2 2'],
-  pause: ['M9 5v14', 'M15 5v14'],
-  play: ['m8 5 11 7-11 7Z'],
-  plus: ['M12 5v14', 'M5 12h14'],
-  refresh: ['M20 7v5h-5', 'M4 17v-5h5', 'M6.1 8a8 8 0 0 1 13.4 2.5L20 12', 'M4 12l.5 1.5A8 8 0 0 0 17.9 16'],
-  shield: ['M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z', 'm9 12 2 2 4-4'],
-  trash: ['M4 7h16', 'M9 7V4h6v3', 'm6 7 1 14h10l1-14', 'M10 11v6', 'M14 11v6'],
-  alert: ['m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z', 'M12 9v4', 'M12 17h.01'],
-  bell: ['M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9', 'M10.3 21a1.94 1.94 0 0 0 3.4 0'],
-  check: ['M20 6 9 17l-5-5'],
-  copy: ['M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Z', 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'],
-  cpu: ['M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z', 'M9 9h6v6H9z', 'M15 2v2', 'M15 20v2', 'M2 15h2', 'M2 9h2', 'M20 15h2', 'M20 9h2', 'M9 2v2', 'M9 20v2'],
-}
-
-function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      {iconPaths[name].map((path) => <path key={path} d={path} />)}
-    </svg>
-  )
-}
-
-function CopyIdButton({ id, t }: { id: string; t: typeof translate }) {
-  const [copied, setCopied] = React.useState(false)
-  return (
-    <button
-      type="button"
-      className="automation-copy"
-      aria-label={t('copy')}
-      title={t('copy')}
-      onClick={() => {
-        void navigator.clipboard?.writeText(id).then(() => {
-          setCopied(true)
-          window.setTimeout(() => setCopied(false), 1500)
-        }).catch(() => undefined)
-      }}
-    >
-      <Icon name={copied ? 'check' : 'copy'} size={14} />
-    </button>
-  )
-}
+type StatusFilter = 'all' | 'active' | 'paused' | 'completed'
 
 function installStyles(): () => void {
   if (document.querySelector(`style[${STYLE_ATTRIBUTE}]`) !== null) return () => undefined
@@ -87,728 +76,240 @@ function installStyles(): () => void {
   return () => element.remove()
 }
 
-function setPanelOpen(open: boolean): void {
-  panelOpen = open
-  for (const listener of panelListeners) listener()
-}
-
-function usePanelOpen(): boolean {
-  return React.useSyncExternalStore(
-    (listener) => {
-      panelListeners.add(listener)
-      return () => panelListeners.delete(listener)
-    },
-    () => panelOpen,
-  )
-}
-
-function setUnreadCount(value: number): void {
-  if (unreadCount === value) return
-  unreadCount = value
-  for (const listener of unreadListeners) listener()
-}
-
-function useUnreadCount(): number {
-  return React.useSyncExternalStore(
-    (listener) => {
-      unreadListeners.add(listener)
-      return () => unreadListeners.delete(listener)
-    },
-    () => unreadCount,
-  )
-}
-
-function queueDraft(sessionId: SessionId, text: string): void {
-  pendingDrafts.set(sessionId, text)
-  draftRevision += 1
-  for (const listener of draftListeners) listener()
-}
-
-function consumeDraft(sessionId: SessionId): string | undefined {
-  const text = pendingDrafts.get(sessionId)
-  if (text === undefined) return undefined
-  pendingDrafts.delete(sessionId)
-  draftRevision += 1
-  for (const listener of draftListeners) listener()
-  return text
-}
-
+/** Push a queued prompt into the composer once its session mounts. */
 function DraftInjector({ sessionId, inputActions }: InputDockProps) {
-  const revision = React.useSyncExternalStore(
-    (listener) => {
-      draftListeners.add(listener)
-      return () => draftListeners.delete(listener)
-    },
-    () => draftRevision,
-  )
-
+  const revision = useDraftRevision()
   React.useEffect(() => {
     const text = consumeDraft(sessionId)
     if (text !== undefined) inputActions.setDraft(text)
   }, [revision, sessionId, inputActions])
-
   return null
 }
 
-async function request(path: string, options: RequestInit = {}): Promise<unknown> {
-  const response = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      'x-dsh-automation': '1',
-      ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
-      ...options.headers,
-    },
-  })
-  const value: unknown = await response.json()
-  if (!response.ok) {
-    const message = typeof value === 'object' && value !== null && 'error' in value
-      ? String(value.error)
-      : translate('requestFailed', { status: response.status })
-    throw new Error(message)
-  }
-  return value
-}
-
+/** Sidebar entry point carrying the unread-notification badge. */
 function AutomationButton({ wide }: { wide: boolean }) {
   const { t } = useLocale()
-  const unread = useUnreadCount()
-  React.useEffect(() => {
-    let active = true
-    const refreshUnread = async () => {
-      try {
-        const value = await request('/tasks') as { tasks: AutomationTaskView[] }
-        if (active) setUnreadCount(value.tasks.reduce((sum, task) => sum + task.unreadNotifications, 0))
-      } catch {}
-    }
-    void refreshUnread()
-    const timer = window.setInterval(() => void refreshUnread(), 5000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [])
+  const { unread } = useAutomations()
   return (
     <button
       type="button"
-      className={`automation-nav-trigger ${wide ? 'is-wide' : 'is-rail'}`}
+      className={`am-nav ${wide ? 'is-wide' : 'is-rail'}`}
       aria-label={unread > 0 ? `${t('openAutomations')}. ${t('unreadNotifications', { count: unread })}` : t('openAutomations')}
       title={t('automations')}
       onClick={() => {
         setPanelOpen(true)
-        void request('/notifications/read', { method: 'POST' }).then(() => setUnreadCount(0)).catch(() => undefined)
+        void request('/notifications/read', { method: 'POST' }).then(clearUnread).catch(() => undefined)
       }}
     >
-      <span className="automation-nav-icon"><Icon name="clock" size={18} /></span>
-      {wide && <span className="automation-nav-label">{t('automations')}</span>}
-      {unread > 0 && <span className="automation-nav-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span>}
+      <span className="am-nav-icon"><IconAlarmClockOutline16 /></span>
+      {wide && <span className="am-nav-label">{t('automations')}</span>}
+      {unread > 0 && <span className="am-nav-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span>}
     </button>
   )
 }
 
-function formatDate(value: string, locale: string): string {
-  return new Date(value).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-function formatRunDuration(startedAt: string | undefined, finishedAt: string | undefined, locale: string): string | undefined {
-  if (startedAt === undefined || finishedAt === undefined) return undefined
-  let seconds = Math.max(0, Math.round((Date.parse(finishedAt) - Date.parse(startedAt)) / 1_000))
-  const hours = Math.floor(seconds / 3_600)
-  seconds %= 3_600
-  const minutes = Math.floor(seconds / 60)
-  seconds %= 60
-  const format = (value: number, unit: 'hour' | 'minute' | 'second') =>
-    new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value)
-  if (hours > 0) return [format(hours, 'hour'), minutes > 0 && format(minutes, 'minute')].filter(Boolean).join(' ')
-  if (minutes > 0) return [format(minutes, 'minute'), seconds > 0 && format(seconds, 'second')].filter(Boolean).join(' ')
-  return format(seconds, 'second')
-}
-
-function formatRelative(value: string, locale: string): string {
-  const seconds = Math.round((Date.parse(value) - Date.now()) / 1_000)
-  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'long' })
-  const magnitude = Math.abs(seconds)
-  if (magnitude < 60) return formatter.format(seconds, 'second')
-  const minutes = Math.round(seconds / 60)
-  if (Math.abs(minutes) < 60) return formatter.format(minutes, 'minute')
-  const hours = Math.round(minutes / 60)
-  if (Math.abs(hours) < 24) return formatter.format(hours, 'hour')
-  const days = Math.round(hours / 24)
-  return formatter.format(days, 'day')
-}
-
-function basename(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/, '')
-  const index = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  return index === -1 ? trimmed : trimmed.slice(index + 1)
-}
-
-function runHealthTooltip(run: AutomationTaskView['runs'][number], locale: string, t: typeof translate): string {
-  const parts = [statusLabel(run.status, t), triggerLabel(run.trigger, t)]
-  const duration = formatRunDuration(run.startedAt, run.finishedAt, locale)
-  if (duration !== undefined) parts.push(duration)
-  parts.push(formatDate(run.startedAt ?? run.enqueuedAt, locale))
-  if (run.summary !== undefined) parts.push(run.summary)
-  if (run.error !== undefined) parts.push(run.error)
-  return parts.join(' · ')
-}
-
-function scheduleLabel(task: AutomationTaskView, locale: string, t: typeof translate): string {
-  if (task.schedule.kind === 'once') return `${t('once')} · ${formatDate(task.schedule.fireAt, locale)}`
-  const rule = parseCommonRRule(task.schedule.rrule)
-  if (rule === undefined) return `${task.schedule.rrule} · ${task.schedule.timeZone}`
-  const interval = Number(rule.interval)
-  const repeat = rule.frequency === 'DAILY'
-    ? t(interval === 1 ? 'everyDay' : 'everyDays', { count: interval })
-    : rule.frequency === 'WEEKLY'
-      ? t(interval === 1 ? 'everyWeek' : 'everyWeeks', { count: interval })
-      : t(interval === 1 ? 'everyMonth' : 'everyMonths', { count: interval })
-  let detail = ''
-  if (rule.frequency === 'WEEKLY' && rule.weekdays.length > 0) {
-    const chinese = locale.toLowerCase().startsWith('zh')
-    detail = rule.weekdays.map((day) => `${chinese ? '周' : ''}${t(WEEKDAY_KEYS[day])}`).join(chinese ? '、' : ', ')
-  }
-  if (rule.frequency === 'MONTHLY' && rule.monthDay) detail = t('dayOfMonth', { day: rule.monthDay })
-  return [repeat, detail, task.schedule.timeZone].filter(Boolean).join(' · ')
-}
-
-function statusLabel(status: string, t: typeof translate): string {
-  if (status === 'active') return t('statusActive')
-  if (status === 'paused') return t('statusPaused')
-  if (status === 'completed') return t('statusCompleted')
-  if (status === 'queued') return t('statusQueued')
-  if (status === 'running') return t('statusRunning')
-  if (status === 'succeeded') return t('statusSucceeded')
-  if (status === 'failed') return t('statusFailed')
-  if (status === 'interrupted') return t('statusInterrupted')
-  if (status === 'outcome_unknown') return t('statusOutcomeUnknown')
-  if (status === 'timed_out') return t('statusTimedOut')
-  if (status === 'canceled') return t('statusCanceled')
-  return status
-}
-
-function triggerLabel(trigger: string, t: typeof translate): string {
-  if (trigger === 'manual') return t('triggerManual')
-  if (trigger === 'scheduled') return t('triggerScheduled')
-  return trigger
-}
-
-function notificationPolicyLabel(policy: AutomationTaskView['notificationPolicy'], t: typeof translate): string {
-  if (policy === 'always') return t('notificationAlways')
-  if (policy === 'never') return t('notificationNever')
-  return t('notificationFailures')
-}
-
-function executionLabel(task: AutomationTaskView, t: typeof translate): string {
-  const preset = task.execution.agentPreset ?? t('hostDefault')
-  const model = task.execution.provider === undefined ? t('hostDefault') : `${task.execution.provider}/${task.execution.model}`
-  const skills = task.execution.skills.length === 0 ? t('noSelectedSkills') : task.execution.skills.join(', ')
-  return `${preset} · ${model} · ${skills}`
-}
-
-function permissionLabel(
-  preset: AutomationTaskView['security']['permissionPreset'],
-  t: typeof translate,
-  displayName?: string,
-): string {
-  if (displayName !== undefined) return displayName
-  if (preset === 'read-only') return t('permissionReadOnly')
-  if (preset === 'danger-full-access') return t('permissionFullAccess')
-  return preset
-}
-
-function statusClass(status: string): string {
-  return ['active', 'paused', 'completed', 'queued', 'running', 'succeeded', 'failed', 'interrupted', 'outcome_unknown', 'timed_out', 'canceled'].includes(status)
-    ? `is-${status}`
-    : 'is-neutral'
-}
-
-type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>> & {
-  permissionPreset?: AutomationTaskView['security']['permissionPreset']
-  confirmPermissionChange?: true
-  execution?: AutomationExecutionPatch
-}
-
-const WEEKDAY_KEYS = {
-  MO: 'weekdayMonday',
-  TU: 'weekdayTuesday',
-  WE: 'weekdayWednesday',
-  TH: 'weekdayThursday',
-  FR: 'weekdayFriday',
-  SA: 'weekdaySaturday',
-  SU: 'weekdaySunday',
-} as const satisfies Record<Weekday, string>
-
-const INTERVAL_UNIT_KEYS = {
-  DAILY: 'intervalDays',
-  WEEKLY: 'intervalWeeks',
-  MONTHLY: 'intervalMonths',
-} as const satisfies Record<CommonRRule['frequency'], string>
-
-function toLocalDateTime(value: string): string {
-  const date = new Date(value)
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 19)
-}
-
-function EditTaskForm({
-  task,
-  saving,
-  t,
-  onSave,
-  onCancel,
-}: {
-  task: AutomationTaskView
-  saving: boolean
+/** Scheduler state as a dot whose hover card carries every health field. */
+function SchedulerHealth({ health, locale, t }: {
+  health: AutomationSchedulerHealth | undefined
+  locale: string
   t: typeof translate
-  onSave: (body: TaskUpdateBody) => void
-  onCancel: () => void
 }) {
-  const fallbackInstant = task.schedule.kind === 'once'
-    ? task.schedule.fireAt
-    : task.nextRunAt ?? new Date(Date.now() + 60 * 60_000).toISOString()
-  const [name, setName] = React.useState(task.name)
-  const [prompt, setPrompt] = React.useState(task.prompt)
-  const [notificationPolicy, setNotificationPolicy] = React.useState(task.notificationPolicy)
-  const [pauseAfterFailures, setPauseAfterFailures] = React.useState(task.pauseAfterConsecutiveFailures)
-  const [permissionPreset, setPermissionPreset] = React.useState(task.security.permissionPreset)
-  const [permissionConfirmed, setPermissionConfirmed] = React.useState(false)
-  const [agentPreset, setAgentPreset] = React.useState(task.execution.agentPreset ?? '')
-  const [provider, setProvider] = React.useState(task.execution.provider ?? '')
-  const [model, setModel] = React.useState(task.execution.model ?? '')
-  const [skills, setSkills] = React.useState<string[]>(task.execution.skills)
-  const executionOverridden = agentPreset !== '' || provider !== '' || model !== '' || skills.length > 0
-  const [executionOpen, setExecutionOpen] = React.useState(executionOverridden)
-  const [options, setOptions] = React.useState<AgentConfigurationOptions>()
-  const [optionsLoading, setOptionsLoading] = React.useState(true)
-  const [optionsError, setOptionsError] = React.useState<string>()
-  const [kind, setKind] = React.useState<AutomationTaskView['schedule']['kind']>(task.schedule.kind)
-  const [onceAt, setOnceAt] = React.useState(toLocalDateTime(fallbackInstant))
-  const defaultMonthDay = String(Number((task.schedule.kind === 'recurring' ? task.schedule.startAt : toLocalDateTime(fallbackInstant)).slice(8, 10)))
-  const initialRrule = task.schedule.kind === 'recurring' ? task.schedule.rrule : 'FREQ=DAILY'
-  const initialCommonRule = parseCommonRRule(initialRrule, defaultMonthDay)
-  const initialComparableRrule = initialCommonRule === undefined ? initialRrule : buildCommonRRule(initialCommonRule)
-  const [rrule, setRrule] = React.useState(initialRrule)
-  const [advancedRule, setAdvancedRule] = React.useState(initialCommonRule === undefined)
-  const [commonRule, setCommonRule] = React.useState<CommonRRule>(initialCommonRule ?? defaultCommonRRule(defaultMonthDay))
-  const [timeZone, setTimeZone] = React.useState(task.schedule.kind === 'recurring'
-    ? task.schedule.timeZone
-    : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
-  const [startAt, setStartAt] = React.useState(task.schedule.kind === 'recurring'
-    ? task.schedule.startAt
-    : toLocalDateTime(fallbackInstant))
-  const normalizedStartAt = startAt.length === 16 ? `${startAt}:00` : startAt
-  const effectiveRrule = advancedRule ? rrule : buildCommonRRule(commonRule)
-  const parsedRawRule = parseCommonRRule(rrule, defaultMonthDay)
-  const scheduleChanged = task.schedule.kind !== kind || (kind === 'once'
-    ? task.schedule.kind !== 'once' || onceAt !== toLocalDateTime(task.schedule.fireAt)
-    : task.schedule.kind !== 'recurring' || effectiveRrule !== initialComparableRrule || timeZone !== task.schedule.timeZone || normalizedStartAt !== task.schedule.startAt)
-  const permissionChanged = permissionPreset !== task.security.permissionPreset
-  const modelChanged = provider !== (task.execution.provider ?? '') || model !== (task.execution.model ?? '')
-  const executionChanged = agentPreset !== (task.execution.agentPreset ?? '') || modelChanged ||
-    skills.join('\0') !== task.execution.skills.join('\0')
-  const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged || permissionChanged ||
-    executionChanged || notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
-  const selectedPermission = options?.permissions.find((entry) => entry.id === permissionPreset)
-  const selectedProvider = options?.models.find((entry) => entry.provider === provider)
-  const selectedPresetAvailable = agentPreset === '' || options?.presets.some((entry) => entry.id === agentPreset && entry.broken === undefined)
-  const skillsAvailable = skills.every((name) => options?.skills.some((entry) => entry.name === name))
-  const legacyPartialModelUnchanged = !modelChanged && ((task.execution.provider === undefined) !== (task.execution.model === undefined))
-  const configValid = selectedPresetAvailable !== false && skillsAvailable && selectedPermission !== undefined &&
-    (((provider === '') === (model === '')) || legacyPartialModelUnchanged)
-
-  const loadOptions = React.useCallback(async (candidate?: string) => {
-    try {
-      setOptionsLoading(true)
-      setOptionsError(undefined)
-      const query = candidate === undefined ? '' : `?agentPreset=${encodeURIComponent(candidate)}`
-      const value = await request(`/tasks/${encodeURIComponent(task.id)}/options${query}`) as { options: AgentConfigurationOptions }
-      setOptions(value.options)
-    } catch (reason) {
-      setOptionsError(reason instanceof Error ? reason.message : String(reason))
-    } finally {
-      setOptionsLoading(false)
-    }
-  }, [task.id])
-
-  React.useEffect(() => { void loadOptions() }, [loadOptions])
-
+  if (health === undefined) return null
+  const state: StateDotState = health.status === 'healthy' ? 'done' : health.status === 'retrying' ? 'warning' : 'error'
+  const label = health.status === 'healthy'
+    ? t('schedulerHealthy')
+    : health.status === 'retrying' ? t('schedulerHealthRetrying') : t('schedulerHealthStopped')
+  const detailed = health.consecutiveFailures > 0 || health.lastError !== undefined ||
+    health.lastFailedAt !== undefined || health.retryAt !== undefined
+  const chip = (
+    <span className="am-scheduler">
+      <StateDot state={state} size={8} />
+      <span>{label}</span>
+    </span>
+  )
+  if (!detailed) return chip
   return (
-    <form
-      className="automation-editor"
-      onSubmit={(event) => {
-        event.preventDefault()
-        const schedule: AutomationTaskView['schedule'] | undefined = !scheduleChanged
-          ? undefined
-          : kind === 'once'
-            ? { kind: 'once', fireAt: new Date(onceAt).toISOString() }
-            : { kind: 'recurring', rrule: effectiveRrule, timeZone, startAt: normalizedStartAt }
-        onSave({
-          ...(name.trim() === task.name ? {} : { name }),
-          ...(prompt.trim() === task.prompt ? {} : { prompt }),
-          ...(schedule === undefined ? {} : { schedule }),
-          ...(notificationPolicy === task.notificationPolicy ? {} : { notificationPolicy }),
-          ...(pauseAfterFailures === task.pauseAfterConsecutiveFailures ? {} : { pauseAfterConsecutiveFailures: pauseAfterFailures }),
-          ...(permissionChanged ? { permissionPreset, confirmPermissionChange: true as const } : {}),
-          ...(executionChanged ? {
-            execution: {
-              ...(agentPreset === (task.execution.agentPreset ?? '') ? {} : { agentPreset: agentPreset || null }),
-              ...((provider === (task.execution.provider ?? '') && model === (task.execution.model ?? '')) ? {} : {
-                provider: provider || null,
-                model: model || null,
-              }),
-              ...(skills.join('\0') === task.execution.skills.join('\0') ? {} : { skills }),
-            },
-          } : {}),
-        })
-      }}
-    >
-      <header className="automation-editor-header">
-        <button type="button" className="automation-icon-button" onClick={onCancel} disabled={saving} aria-label={t('cancel')} title={t('cancel')}>
-          <Icon name="close" />
-        </button>
-        <div className="automation-editor-header-copy">
-          <h2>{t('editTask')}</h2>
-          <small>{t('editFutureRunsHint')}</small>
-        </div>
-        <button type="submit" className="automation-button is-primary" disabled={saving || optionsLoading || !configValid || !changed || (permissionChanged && !permissionConfirmed)}>
-          {saving ? t('saving') : t('saveChanges')}
-        </button>
-      </header>
-
-      <div className="automation-editor-body automation-scroll">
-        <fieldset disabled={saving}>
-          <section className="automation-editor-section">
-            <h3>{t('sectionBasics')}</h3>
-            <div className="automation-editor-section-grid">
-              <label className="automation-field is-full">
-                <span>{t('nameLabel')}</span>
-                <input required value={name} onChange={(event) => setName(event.target.value)} />
-              </label>
-              <label className="automation-field is-full">
-                <span>{t('promptLabel')}</span>
-                <textarea required rows={6} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-              </label>
-            </div>
-          </section>
-
-          <section className="automation-editor-section">
-            <h3>{t('schedule')}</h3>
-            <div className="automation-editor-section-grid">
-              <label className="automation-field">
-                <span>{t('scheduleType')}</span>
-                <select value={kind} onChange={(event) => setKind(event.target.value as AutomationTaskView['schedule']['kind'])}>
-                  <option value="once">{t('oneTimeSchedule')}</option>
-                  <option value="recurring">{t('recurringSchedule')}</option>
-                </select>
-              </label>
-              {kind === 'once' ? (
-                <label className="automation-field">
-                  <span>{t('runAt')}</span>
-                  <input required type="datetime-local" step="1" value={onceAt} onChange={(event) => setOnceAt(event.target.value)} />
-                </label>
-              ) : (
-                <>
-                  <div className="automation-field is-full">
-                    <span>{t('recurrenceRule')}</span>
-                    <div className="automation-rule-mode" role="group" aria-label={t('ruleMode')}>
-                      <button
-                        type="button"
-                        className={!advancedRule ? 'is-active' : undefined}
-                        disabled={advancedRule && parsedRawRule === undefined}
-                        title={advancedRule && parsedRawRule === undefined ? t('unsupportedRuleHint') : undefined}
-                        onClick={() => {
-                          if (parsedRawRule === undefined) return
-                          setCommonRule(parsedRawRule)
-                          setAdvancedRule(false)
-                        }}
-                      >
-                        {t('visualMode')}
-                      </button>
-                      <button
-                        type="button"
-                        className={advancedRule ? 'is-active' : undefined}
-                        onClick={() => {
-                          if (!advancedRule) setRrule(buildCommonRRule(commonRule))
-                          setAdvancedRule(true)
-                        }}
-                      >
-                        {t('advancedMode')}
-                      </button>
-                    </div>
-                    {advancedRule ? (
-                      <div className="automation-rule-advanced">
-                        <input required value={rrule} placeholder="FREQ=WEEKLY;BYDAY=MO" onChange={(event) => setRrule(event.target.value)} />
-                        <small>{parsedRawRule === undefined ? t('unsupportedRuleHint') : t('advancedRuleHint')}</small>
-                      </div>
-                    ) : (
-                      <div className="automation-rule-builder">
-                        <label className="automation-field">
-                          <span>{t('frequency')}</span>
-                          <select value={commonRule.frequency} onChange={(event) => setCommonRule({ ...commonRule, frequency: event.target.value as CommonRRule['frequency'] })}>
-                            <option value="DAILY">{t('frequencyDaily')}</option>
-                            <option value="WEEKLY">{t('frequencyWeekly')}</option>
-                            <option value="MONTHLY">{t('frequencyMonthly')}</option>
-                          </select>
-                        </label>
-                        <label className="automation-field">
-                          <span>{t('repeatEvery')}</span>
-                          <span className="automation-interval-control">
-                            <input required type="number" min="1" step="1" value={commonRule.interval} onChange={(event) => setCommonRule({ ...commonRule, interval: event.target.value })} />
-                            <b>{t(INTERVAL_UNIT_KEYS[commonRule.frequency])}</b>
-                          </span>
-                        </label>
-                        {commonRule.frequency === 'WEEKLY' && (
-                          <div className="automation-field is-full">
-                            <span>{t('repeatOn')}</span>
-                            <div className="automation-weekdays">
-                              {WEEKDAYS.map((day) => (
-                                <label key={day}>
-                                  <input
-                                    type="checkbox"
-                                    checked={commonRule.weekdays.includes(day)}
-                                    onChange={(event) => setCommonRule({
-                                      ...commonRule,
-                                      weekdays: event.target.checked
-                                        ? [...commonRule.weekdays, day]
-                                        : commonRule.weekdays.filter((value) => value !== day),
-                                    })}
-                                  />
-                                  <span>{t(WEEKDAY_KEYS[day])}</span>
-                                </label>
-                              ))}
-                            </div>
-                            {commonRule.weekdays.length === 0 && <small>{t('useStartDayHint')}</small>}
-                          </div>
-                        )}
-                        {commonRule.frequency === 'MONTHLY' && (
-                          <label className="automation-field">
-                            <span>{t('monthlyOnDay')}</span>
-                            <input required type="number" min="1" max="31" step="1" value={commonRule.monthDay} onChange={(event) => setCommonRule({ ...commonRule, monthDay: event.target.value })} />
-                          </label>
-                        )}
-                        <label className="automation-field">
-                          <span>{t('ends')}</span>
-                          <select value={commonRule.end} onChange={(event) => setCommonRule({ ...commonRule, end: event.target.value as CommonRRule['end'] })}>
-                            <option value="never">{t('endsNever')}</option>
-                            <option value="count">{t('endsAfter')}</option>
-                            <option value="until">{t('endsOnDate')}</option>
-                          </select>
-                        </label>
-                        {commonRule.end === 'count' && (
-                          <label className="automation-field">
-                            <span>{t('occurrences')}</span>
-                            <input required type="number" min="1" step="1" value={commonRule.count} onChange={(event) => setCommonRule({ ...commonRule, count: event.target.value })} />
-                          </label>
-                        )}
-                        {commonRule.end === 'until' && (
-                          <label className="automation-field">
-                            <span>{t('endDate')}</span>
-                            <input required type="date" value={commonRule.until} onChange={(event) => setCommonRule({ ...commonRule, until: event.target.value })} />
-                          </label>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <label className="automation-field">
-                    <span>{t('timeZone')}</span>
-                    <input required value={timeZone} placeholder="Asia/Shanghai" onChange={(event) => setTimeZone(event.target.value)} />
-                  </label>
-                  <label className="automation-field">
-                    <span>{t('startsAt')}</span>
-                    <input required type="datetime-local" step="1" value={startAt} onChange={(event) => setStartAt(event.target.value)} />
-                  </label>
-                </>
-              )}
-            </div>
-          </section>
-
-          <details className="automation-editor-collapsible" open={executionOpen} onToggle={(event) => setExecutionOpen(event.currentTarget.open)}>
-            <summary><span>{t('agentExecution')}</span><Icon name="chevron" /></summary>
-            <div className="automation-editor-collapsible-body">
-              {optionsError !== undefined && <p className="automation-config-error" role="alert">{t('optionsFailure', { error: optionsError })}</p>}
-              {optionsLoading && <p className="automation-config-status" aria-live="polite">{t('optionsLoading')}</p>}
-              <fieldset className="automation-config-grid" disabled={saving || optionsLoading}>
-                <label className="automation-field is-full">
-                  <span>{t('agentPreset')}</span>
-                  <select value={agentPreset} onChange={(event) => {
-                    const value = event.target.value
-                    setAgentPreset(value)
-                    void loadOptions(value)
-                  }}>
-                    <option value="">{t('hostDefault')}</option>
-                    {agentPreset !== '' && !options?.presets.some((entry) => entry.id === agentPreset) && <option value={agentPreset}>{agentPreset} · {t('unavailable')}</option>}
-                    {options?.presets.map((entry) => <option key={entry.id} value={entry.id} disabled={entry.broken !== undefined}>
-                      {entry.name} · {entry.trust}{entry.broken === undefined ? '' : ` · ${t('unavailable')}`}
-                    </option>)}
-                  </select>
-                  {agentPreset !== '' && options?.presets.find((entry) => entry.id === agentPreset)?.description !== undefined && <small>{options.presets.find((entry) => entry.id === agentPreset)!.description}</small>}
-                </label>
-                <label className="automation-field">
-                  <span>{t('provider')}</span>
-                  <select value={provider} onChange={(event) => {
-                    const value = event.target.value
-                    setProvider(value)
-                    setModel('')
-                  }}>
-                    <option value="">{t('hostDefault')}</option>
-                    {provider !== '' && !options?.models.some((entry) => entry.provider === provider) && <option value={provider}>{provider} · {t('unavailable')}</option>}
-                    {options?.models.map((entry) => <option key={entry.provider} value={entry.provider}>{entry.name}</option>)}
-                  </select>
-                </label>
-                <label className="automation-field">
-                  <span>{t('model')}</span>
-                  <select value={model} disabled={saving || optionsLoading || provider === ''} onChange={(event) => setModel(event.target.value)}>
-                    <option value="">{provider === '' ? t('hostDefault') : t('selectModel')}</option>
-                    {model !== '' && !selectedProvider?.models.some((entry) => entry.id === model) && <option value={model}>{model} · {t('notInCatalog')}</option>}
-                    {selectedProvider?.models.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-                  </select>
-                </label>
-                {options?.modelFailures.map((failure) => <p key={failure.provider} className="automation-config-error is-full" role="alert">{t('providerFailure', { provider: failure.provider, error: failure.error })}</p>)}
-                <div className="automation-field is-full">
-                  <span>{t('selectedSkills')}</span>
-                  <div className="automation-skills">
-                    {[...new Set([...skills, ...(options?.skills.map((entry) => entry.name) ?? [])])].map((name) => {
-                      const option = options?.skills.find((entry) => entry.name === name)
-                      return <label key={name} className={option === undefined ? 'is-unavailable' : undefined}>
-                        <input type="checkbox" checked={skills.includes(name)} onChange={(event) => setSkills(event.target.checked ? [...skills, name] : skills.filter((entry) => entry !== name))} />
-                        <span><b>{name}</b>{option === undefined ? t('unavailable') : option.description}{option?.modelInvocable ? ` · ${t('modelInvocable')}` : ''}</span>
-                      </label>
-                    })}
-                    {(options?.skills.length ?? 0) === 0 && skills.length === 0 && <small>{t('noSkills')}</small>}
-                  </div>
-                </div>
-              </fieldset>
-            </div>
-          </details>
-          <section className="automation-editor-section">
-            <h3>{t('notifications')}</h3>
-            <div className="automation-editor-section-grid">
-              <label className="automation-field">
-                <span>{t('notifications')}</span>
-                <select value={notificationPolicy} onChange={(event) => setNotificationPolicy(event.target.value as AutomationTaskView['notificationPolicy'])}>
-                  <option value="failures">{t('notificationFailures')}</option>
-                  <option value="always">{t('notificationAlways')}</option>
-                  <option value="never">{t('notificationNever')}</option>
-                </select>
-              </label>
-              <label className="automation-field">
-                <span>{t('pauseAfterFailures')}</span>
-                <select value={pauseAfterFailures ? 'enabled' : 'disabled'} onChange={(event) => setPauseAfterFailures(event.target.value === 'enabled')}>
-                  <option value="disabled">{t('disabled')}</option>
-                  <option value="enabled">{t('enabled')}</option>
-                </select>
-              </label>
-            </div>
-          </section>
-
-          <section className="automation-editor-section">
-            <h3>{t('permission')}</h3>
-            <label className="automation-field">
-              <span>{t('permission')}</span>
-              <select value={permissionPreset} disabled={optionsLoading} onChange={(event) => {
-                setPermissionPreset(event.target.value as AutomationTaskView['security']['permissionPreset'])
-                setPermissionConfirmed(false)
-              }}>
-                {!options?.permissions.some((entry) => entry.id === permissionPreset) && <option value={permissionPreset}>{permissionPreset} · {t('unavailable')}</option>}
-                {options?.permissions.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-              </select>
-              {selectedPermission !== undefined && <small>{[selectedPermission.description, `${selectedPermission.sandbox} · approval: ${selectedPermission.approval}`].filter(Boolean).join(' · ')}</small>}
-            </label>
-            {selectedPermission?.approval === 'ask' && <p className="automation-approval-warning" role="alert">{t('approvalAskWarning')}</p>}
-            {permissionChanged && (
-              <label className="automation-permission-confirm">
-                <input type="checkbox" checked={permissionConfirmed} onChange={(event) => setPermissionConfirmed(event.target.checked)} />
-                <span>{t('confirmPermissionChange', { permission: permissionLabel(permissionPreset, t, selectedPermission?.name) })}</span>
-              </label>
-            )}
-          </section>
-        </fieldset>
-      </div>
-
-      <footer className="automation-editor-footer">
-        <button type="button" className="automation-button" disabled={saving} onClick={onCancel}>{t('cancel')}</button>
-        <button type="submit" className="automation-button is-primary" disabled={saving || optionsLoading || !configValid || !changed || (permissionChanged && !permissionConfirmed)}>
-          {saving ? t('saving') : t('saveChanges')}
-        </button>
-      </footer>
-    </form>
+    <HoverCard
+      anchor={chip}
+      copyLabel={t('copy')}
+      copiedLabel={t('copied')}
+      {...(health.lastError !== undefined ? { copyText: health.lastError } : {})}
+      content={
+        <dl className="am-scheduler-card">
+          <dt>{t('schedulerFailureCount')}</dt><dd>{health.consecutiveFailures}</dd>
+          {health.lastFailedAt !== undefined && <><dt>{t('schedulerLastFailedAt')}</dt><dd>{formatDate(health.lastFailedAt, locale)}</dd></>}
+          {health.retryAt !== undefined && <><dt>{t('schedulerRetryAt')}</dt><dd>{formatDate(health.retryAt, locale)}</dd></>}
+          {health.lastError !== undefined && <><dt>{t('schedulerLastError')}</dt><dd>{health.lastError}</dd></>}
+        </dl>
+      }
+    />
   )
 }
 
-type AutomationPanelProps = OverlayProps & {
-  ctx: Context
-  useSessions: SnapshotSelectorHook<SessionListState>
-  useWorkspaces: SnapshotSelectorHook<WorkspaceListState>
+/** One scannable row in the master list. */
+function TaskRow({ task, locale, t, selected, onSelect }: {
+  task: AutomationTaskView
+  locale: string
+  t: typeof translate
+  selected: boolean
+  onSelect: () => void
+}) {
+  const displayStatus = task.running ? 'running' : task.status
+  return (
+    <button
+      type="button"
+      className={selected ? 'am-row is-selected' : 'am-row'}
+      aria-current={selected}
+      onClick={onSelect}
+    >
+      <StateDot state={statusState(displayStatus)} size={8} className="am-row-dot" />
+      <span className="am-row-body">
+        <span className="am-row-name">{task.name}</span>
+        <span className="am-row-meta">
+          {task.nextRunAt !== null
+            ? formatRelative(task.nextRunAt, locale)
+            : task.status === 'completed' ? t('statusCompleted') : t('statusPaused')}
+        </span>
+      </span>
+      {task.consecutiveFailures > 0 && (
+        <span className="am-failure-chip" title={`${t('consecutiveFailures')} · ${task.consecutiveFailures}`}>
+          <IconWarningOutline16 size={12} />
+          {task.consecutiveFailures}
+        </span>
+      )}
+    </button>
+  )
+}
+
+/** Templates offered when no automation exists yet. */
+function EmptyState({ t, creating, disabled, onStart }: {
+  t: typeof translate
+  creating: string | undefined
+  disabled: boolean
+  onStart: (id: string, prompt: string) => void
+}) {
+  const examples = [
+    { id: 'release', icon: <IconCalendar size={18} />, title: t('exampleReleaseTitle'), description: t('exampleReleaseDescription'), prompt: t('exampleReleasePrompt') },
+    { id: 'dependencies', icon: <IconShield size={18} />, title: t('exampleDependenciesTitle'), description: t('exampleDependenciesDescription'), prompt: t('exampleDependenciesPrompt') },
+    { id: 'handoff', icon: <IconAlarmClockOutline16 size={18} />, title: t('exampleHandoffTitle'), description: t('exampleHandoffDescription'), prompt: t('exampleHandoffPrompt') },
+  ]
+  return (
+    <div className="am-onboarding">
+      <span className="am-onboarding-icon"><IconAlarmClockOutline16 size={28} /></span>
+      <h3>{t('noAutomations')}</h3>
+      <p>{t('createHint')}</p>
+      <div className="am-examples">
+        {examples.map((example) => (
+          <button
+            key={example.id}
+            type="button"
+            className="am-example"
+            disabled={disabled || creating !== undefined}
+            aria-busy={creating === example.id}
+            onClick={() => onStart(example.id, example.prompt)}
+          >
+            <span className="am-example-icon" aria-hidden="true">{example.icon}</span>
+            <span className="am-example-copy">
+              <strong>{example.title}</strong>
+              <span>{creating === example.id ? t('creatingConversation') : example.description}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <small>{disabled ? t('requiresWorkspace') : t('exampleDraftHint')}</small>
+    </div>
+  )
+}
+
+type AutomationPanelProps = OverlayProps & { ctx: Context }
+
+/** Running first, then soonest next run; tasks without one sort last. */
+function orderTasks(tasks: readonly AutomationTaskView[]): AutomationTaskView[] {
+  return [...tasks].sort((left, right) => {
+    if (left.running !== right.running) return left.running ? -1 : 1
+    if (left.nextRunAt === null || right.nextRunAt === null) {
+      if (left.nextRunAt === right.nextRunAt) return left.name.localeCompare(right.name)
+      return left.nextRunAt === null ? 1 : -1
+    }
+    const delta = Date.parse(left.nextRunAt) - Date.parse(right.nextRunAt)
+    return delta === 0 ? left.name.localeCompare(right.name) : delta
+  })
 }
 
 function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelProps) {
   const open = usePanelOpen()
   const { t, locale } = useLocale()
+  const { tasks, scheduler, loading, error } = useAutomations()
   const currentSessionId = useSessions((state: SessionListState) => state.current)
-  const workspaceId = useWorkspaces((state: WorkspaceListState) => {
-    if (currentSessionId !== undefined) {
-      const current = state.items.find((workspace: WorkspaceListState['items'][number]) => workspace.sessionIds.includes(currentSessionId))
-      if (current !== undefined) return current.workspaceId
-    }
-    return state.recentWorkspaceId
+  const workspaceId = useWorkspaces((state: WorkspaceSnapshot) => {
+    if (currentSessionId === undefined) return undefined
+    const current = state.items.find((workspace: WorkspaceSnapshot['items'][number]) => workspace.sessionIds.includes(currentSessionId))
+    return current?.workspaceId
   })
-  const [tasks, setTasks] = React.useState<AutomationTaskView[]>([])
-  const [schedulerHealth, setSchedulerHealth] = React.useState<AutomationSchedulerHealth>()
-  const [loading, setLoading] = React.useState(false)
+
+  const [selectedId, setSelectedId] = React.useState<string>()
+  const [query, setQuery] = React.useState('')
+  const [filter, setFilter] = React.useState<StatusFilter>('all')
   const [actingTaskId, setActingTaskId] = React.useState<string>()
-  const [confirmingTaskId, setConfirmingTaskId] = React.useState<string>()
-  const [editingTaskId, setEditingTaskId] = React.useState<string>()
+  const [editing, setEditing] = React.useState(false)
+  const [deletingId, setDeletingId] = React.useState<string>()
   const [creatingExampleId, setCreatingExampleId] = React.useState<string>()
-  const [error, setError] = React.useState<string>()
+  const [narrowDetail, setNarrowDetail] = React.useState(false)
   const panelRef = React.useRef<HTMLElement | null>(null)
-  const editorRef = React.useRef<HTMLDivElement | null>(null)
   const restoreFocusRef = React.useRef<HTMLElement | null>(null)
-  const hasLoadedRef = React.useRef(false)
-  const examples: Array<{ id: string; icon: IconName; title: string; description: string; prompt: string }> = [
-    { id: 'release', icon: 'calendar', title: t('exampleReleaseTitle'), description: t('exampleReleaseDescription'), prompt: t('exampleReleasePrompt') },
-    { id: 'dependencies', icon: 'shield', title: t('exampleDependenciesTitle'), description: t('exampleDependenciesDescription'), prompt: t('exampleDependenciesPrompt') },
-    { id: 'handoff', icon: 'clock', title: t('exampleHandoffTitle'), description: t('exampleHandoffDescription'), prompt: t('exampleHandoffPrompt') },
-  ]
 
-  const refresh = React.useCallback(async () => {
-    const isFirstLoad = !hasLoadedRef.current
-    try {
-      if (isFirstLoad) setLoading(true)
-      const value = await request('/tasks') as { tasks: AutomationTaskView[]; scheduler: AutomationSchedulerHealth }
-      hasLoadedRef.current = true
-      setTasks(value.tasks)
-      setSchedulerHealth(value.scheduler)
-      setError(undefined)
-    } catch (reason) {
-      if (isFirstLoad) {
-        hasLoadedRef.current = true
-        setError(reason instanceof Error ? reason.message : String(reason))
-      }
-    } finally {
-      if (isFirstLoad) setLoading(false)
-    }
-  }, [])
+  const ordered = React.useMemo(() => orderTasks(tasks), [tasks])
+  const needle = query.trim().toLowerCase()
+  const visible = React.useMemo(() => ordered.filter((task) => {
+    if (filter !== 'all' && task.status !== filter) return false
+    if (needle === '') return true
+    return task.name.toLowerCase().includes(needle) || task.prompt.toLowerCase().includes(needle)
+  }), [ordered, filter, needle])
 
+  const selected = selectedId === undefined ? undefined : tasks.find((task) => task.id === selectedId)
+  // Keep a selection on screen as the list changes underneath (a poll that
+  // dropped the selected task, or a filter that excluded it).
   React.useEffect(() => {
     if (!open) return
-    void refresh()
-    const timer = window.setInterval(() => void refresh(), 5000)
-    return () => window.clearInterval(timer)
-  }, [open, refresh])
+    if (selected !== undefined && visible.some((task) => task.id === selected.id)) return
+    const next = visible[0]
+    setSelectedId(next?.id)
+    setEditing(false)
+  }, [open, selected, visible])
+
+  React.useEffect(() => {
+    if (open) void refresh()
+  }, [open])
 
   React.useEffect(() => {
     if (!open) {
-      setConfirmingTaskId(undefined)
-      setEditingTaskId(undefined)
+      setEditing(false)
+      setDeletingId(undefined)
+      setNarrowDetail(false)
       return
     }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if (editingTaskId !== undefined) setEditingTaskId(undefined)
-      else setPanelOpen(false)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (deletingId !== undefined) setDeletingId(undefined)
+        else if (editing) setEditing(false)
+        else if (narrowDetail) setNarrowDetail(false)
+        else setPanelOpen(false)
+        return
+      }
+      if (editing || deletingId !== undefined) return
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+      const active = document.activeElement
+      if (active instanceof HTMLElement && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
+      if (visible.length === 0) return
+      event.preventDefault()
+      const index = visible.findIndex((task) => task.id === selectedId)
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      const next = visible[Math.max(0, Math.min(visible.length - 1, (index === -1 ? 0 : index) + step))]
+      if (next !== undefined) setSelectedId(next.id)
     }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [open, editingTaskId])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, editing, deletingId, narrowDetail, visible, selectedId])
 
   React.useEffect(() => {
     if (!open) {
@@ -821,18 +322,19 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
     if (restoreFocusRef.current === null && document.activeElement instanceof HTMLElement) {
       restoreFocusRef.current = document.activeElement
     }
-    const editing = editingTaskId !== undefined
-    const container = editing ? editorRef.current : panelRef.current
+    const container = panelRef.current
     if (container === null) return
     container.focus()
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Tab') return
-      const current = editing ? editorRef.current : panelRef.current
+      const current = panelRef.current
       if (current === null) return
+      // Modal and Menu portal outside the panel and run their own focus
+      // management; trapping into the panel would fight them.
+      if (!current.contains(document.activeElement)) return
       const focusables = Array.from(current.querySelectorAll<HTMLElement>(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
       )).filter((element) => !element.hasAttribute('disabled') && element.offsetParent !== null)
-      if (focusables.length === 0) return
       const first = focusables[0]
       const last = focusables[focusables.length - 1]
       if (first === undefined || last === undefined) return
@@ -849,383 +351,267 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, editingTaskId])
+  }, [open])
 
   const act = React.useCallback(async (taskId: string, path: string, options: RequestInit) => {
     try {
       setActingTaskId(taskId)
-      setError(undefined)
+      clearError()
       await request(path, options)
       await refresh()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason))
+      reportError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setActingTaskId(undefined)
     }
-  }, [refresh])
+  }, [])
 
-  const updateTask = async (taskId: string, body: TaskUpdateBody): Promise<void> => {
+  const updateTask = React.useCallback(async (taskId: string, body: TaskUpdateBody) => {
     try {
       setActingTaskId(taskId)
-      setError(undefined)
+      clearError()
       await request(`/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(body) })
       await refresh()
-      setEditingTaskId(undefined)
+      setEditing(false)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason))
+      reportError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setActingTaskId(undefined)
     }
-  }
+  }, [])
 
-  const startExample = async (exampleId: string, prompt: string): Promise<void> => {
+  const startExample = React.useCallback(async (exampleId: string, prompt: string) => {
     if (workspaceId === undefined) {
-      setError(t('workspaceUnavailable'))
+      reportError(t('workspaceUnavailable'))
       return
     }
     try {
       setCreatingExampleId(exampleId)
-      setError(undefined)
-      const sessionId = await ctx.workspaces.connectWorkspace(workspaceId)
+      clearError()
+      const sessionId = await ctx.uiWorkspace.connectWorkspace(workspaceId)
       queueDraft(sessionId, prompt)
       ctx.sessions.open(sessionId)
       setPanelOpen(false)
     } catch (reason) {
-      const message = reason instanceof Error ? reason.message : String(reason)
-      setError(t('newConversationFailed', { error: message }))
+      reportError(t('newConversationFailed', { error: reason instanceof Error ? reason.message : String(reason) }))
     } finally {
       setCreatingExampleId(undefined)
     }
-  }
+  }, [ctx, t, workspaceId])
 
   if (!open) return null
 
-  const editingTask = editingTaskId !== undefined ? tasks.find((task) => task.id === editingTaskId) : undefined
+  const openSession = (sessionId: SessionId) => {
+    ctx.sessions.open(sessionId)
+    setPanelOpen(false)
+  }
+
+  const actions: TaskDetailActions | undefined = selected === undefined ? undefined : {
+    run: () => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/run`, { method: 'POST' }),
+    stop: () => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/stop`, { method: 'POST' }),
+    pause: () => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/pause`, { method: 'POST' }),
+    resume: (runNow: boolean) => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/resume`, { method: 'POST', body: JSON.stringify({ runNow }) }),
+    edit: () => setEditing(true),
+    requestDelete: () => setDeletingId(selected.id),
+    openSession,
+    back: () => setNarrowDetail(false),
+  }
+
+  const deletingTask = deletingId === undefined ? undefined : tasks.find((task) => task.id === deletingId)
+  const creationBlocked = workspaceId === undefined
+  const filters: Array<{ id: StatusFilter; label: string }> = [
+    { id: 'all', label: t('filterAll') },
+    { id: 'active', label: t('filterActive') },
+    { id: 'paused', label: t('filterPaused') },
+    { id: 'completed', label: t('filterCompleted') },
+  ]
 
   return (
     <div
-      className="automation-overlay"
+      className="am-overlay"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) setPanelOpen(false)
       }}
     >
-      <section ref={panelRef} tabIndex={-1} className="automation-panel" role="dialog" aria-modal="true" aria-label={t('automations')} aria-busy={loading}>
-        <header className="automation-panel-header">
-          <div className="automation-heading-icon"><Icon name="clock" size={20} /></div>
-          <div className="automation-heading-copy">
-            <h2>{t('automations')}</h2>
-            <p>{t('taskCount', { count: tasks.length })}</p>
-          </div>
-          <button
-            type="button"
-            className="automation-button is-primary automation-create-button"
-            disabled={creatingExampleId !== undefined}
-            aria-label={t('newAutomation')}
-            title={t('newAutomation')}
-            onClick={() => void startExample('new', t('guidedCreationPrompt'))}
-          >
-            <Icon name="plus" />
-            <span className="automation-create-label">{creatingExampleId === 'new' ? t('creatingConversation') : t('newAutomation')}</span>
-          </button>
-          <button type="button" className="automation-icon-button" onClick={() => void refresh()} disabled={loading} aria-label={t('refresh')} title={t('refresh')}>
-            <span className={loading ? 'automation-spin' : undefined}><Icon name="refresh" /></span>
-          </button>
-          <button type="button" className="automation-icon-button" onClick={() => setPanelOpen(false)} aria-label={t('close')} title={t('close')}>
-            <Icon name="close" />
-          </button>
+      <section
+        ref={panelRef}
+        tabIndex={-1}
+        className={narrowDetail ? 'am-panel is-detail' : 'am-panel'}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('automations')}
+        aria-busy={loading}
+      >
+        <header className="am-header">
+          <span className="am-header-icon" aria-hidden="true"><IconAlarmClockOutline16 /></span>
+          <h2 className="am-header-title">{t('tasksHeading')}</h2>
+          <span className="am-header-count">{t('taskCount', { count: tasks.length })}</span>
+          <SchedulerHealth health={scheduler} locale={locale} t={t} />
+          <span className="am-spacer" />
+          <Tooltip label={creationBlocked ? t('requiresWorkspace') : t('newAutomation')} side="bottom" disabled={false}>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              icon={<IconPlusOutline16 />}
+              disabled={creationBlocked || creatingExampleId !== undefined}
+              onClick={() => void startExample('new', t('guidedCreationPrompt'))}
+            >
+              {creatingExampleId === 'new' ? t('creatingConversation') : t('newAutomation')}
+            </Button>
+          </Tooltip>
+          <Tooltip label={t('refresh')} side="bottom">
+            <button type="button" className="am-icon-button" disabled={loading} aria-label={t('refresh')} onClick={() => void refresh()}>
+              {loading ? <span className="am-spin"><IconLoadingOutline16 /></span> : <IconRefreshOutline16 />}
+            </button>
+          </Tooltip>
+          <Tooltip label={t('close')} side="bottom">
+            <button type="button" className="am-icon-button" aria-label={t('close')} onClick={() => setPanelOpen(false)}>
+              <IconCloseOutline16 />
+            </button>
+          </Tooltip>
         </header>
 
-        <div className="automation-panel-body automation-scroll">
-          {error !== undefined && <div className="automation-error" role="alert">{error}</div>}
-          {schedulerHealth?.status === 'retrying' && (
-            <div className="automation-error" role="alert">{t('schedulerRetrying', { error: schedulerHealth.lastError ?? t('unknownError') })}</div>
-          )}
-          {schedulerHealth?.status === 'stopped' && (
-            <div className="automation-error" role="alert">{t('schedulerStopped')}</div>
-          )}
-
-          {tasks.length === 0 && loading && (
-            <div className="automation-empty" aria-live="polite">
-              <span className="automation-empty-icon automation-spin"><Icon name="refresh" size={24} /></span>
-              <h3>{t('loading')}</h3>
-            </div>
-          )}
-
-          {tasks.length === 0 && !loading && (
-            <div className="automation-empty is-examples">
-              <span className="automation-empty-icon"><Icon name="clock" size={28} /></span>
-              <h3>{t('noAutomations')}</h3>
-              <p>{t('createHint')}</p>
-              <div className="automation-examples">
-                {examples.map((example) => (
-                  <button
-                    key={example.id}
-                    type="button"
-                    className="automation-example"
-                    disabled={creatingExampleId !== undefined}
-                    aria-busy={creatingExampleId === example.id}
-                    onClick={() => void startExample(example.id, example.prompt)}
-                  >
-                    <span className="automation-example-icon"><Icon name={example.icon} /></span>
-                    <span className="automation-example-copy">
-                      <strong>{example.title}</strong>
-                      <span>{creatingExampleId === example.id ? t('creatingConversation') : example.description}</span>
-                    </span>
-                    <Icon name="external" />
-                  </button>
-                ))}
-              </div>
-              <small>{t('exampleDraftHint')}</small>
-            </div>
-          )}
-
-          <div className="automation-task-list">
-            {tasks.map((task) => {
-              const busy = task.running
-              const pending = actingTaskId === task.id
-              const confirming = confirmingTaskId === task.id
-              const disabled = busy || pending
-              const displayStatus = busy ? 'running' : task.status
-              const latestResult = [...task.runs].reverse().find((run) => run.summary !== undefined)
-              const latestSession = [...task.runs].reverse().find((run) => run.sessionId !== undefined)?.sessionId
-                ?? (task.execution.target?.mode === 'pinned-session' ? task.execution.target.sessionId : undefined)
-              return (
-                <article key={task.id} className={`automation-task-card ${statusClass(displayStatus)}`}>
-                  <div className="automation-task-accent" />
-                  <header className="automation-task-header">
-                    <div className="automation-task-title">
-                      <h3>{task.name}</h3>
-                      <span className={`automation-status ${statusClass(displayStatus)}`}>
-                        <span className="automation-status-dot" />
-                        {statusLabel(displayStatus, t)}
-                      </span>
-                      {task.consecutiveFailures > 0 && (
-                        <span className="automation-failure-chip" title={t('consecutiveFailures')}>
-                          <Icon name="alert" size={12} />
-                          {task.consecutiveFailures}
-                        </span>
-                      )}
-                    </div>
-                  </header>
-
-                  <div className="automation-next-run">
-                    <span className="automation-next-run-label">{t('next')}</span>
-                    {task.nextRunAt !== null ? (
-                      <>
-                        <strong className="automation-next-run-value">{formatRelative(task.nextRunAt, locale)}</strong>
-                        <span className="automation-next-run-when">
-                          {formatDate(task.nextRunAt, locale)}
-                          {task.schedule.kind === 'recurring' ? ` · ${task.schedule.timeZone}` : ''}
-                        </span>
-                      </>
-                    ) : (
-                      <strong className="automation-next-run-value is-empty">—</strong>
-                    )}
-                  </div>
-
-                  {task.runs.length > 0 && (
-                    <div className="automation-health" aria-hidden="true">
-                      {[...task.runs].slice(-12).map((run) => (
-                        <span
-                          key={run.id}
-                          className={`automation-health-seg ${statusClass(run.status)}`}
-                          title={runHealthTooltip(run, locale, t)}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {latestResult?.summary !== undefined && (
-                    <p className="automation-latest-result">
-                      <b>{t('latestResult')}</b>
-                      <span>{latestResult.summary}</span>
-                    </p>
-                  )}
-
-                  <div className="automation-task-actions">
-                    <button type="button" className="automation-button is-primary" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST' })}>
-                      <Icon name="play" />{t('runNow')}
-                    </button>
-                    {busy && (
-                      <button type="button" className="automation-button is-danger" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/stop`, { method: 'POST' })}>
-                        <Icon name="close" />{t('stopRun')}
-                      </button>
-                    )}
-                    {task.status === 'active' && (
-                      <button type="button" className="automation-button" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/pause`, { method: 'POST' })}>
-                        <Icon name="pause" />{t('pause')}
-                      </button>
-                    )}
-                    {task.status === 'paused' && (
-                      <>
-                        <button type="button" className="automation-button" disabled={pending} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/resume`, { method: 'POST', body: JSON.stringify({ runNow: false }) })}>
-                          <Icon name="play" />{t('resume')}
-                        </button>
-                        <button type="button" className="automation-button" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/resume`, { method: 'POST', body: JSON.stringify({ runNow: true }) })}>
-                          {t('resumeAndRun')}
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  {confirming ? (
-                    <div className="automation-delete-confirm" role="group" aria-label={t('deleteConfirm', { name: task.name })}>
-                      <span>{t('deleteConfirm', { name: task.name })}</span>
-                      <button type="button" className="automation-button" disabled={pending} onClick={() => setConfirmingTaskId(undefined)}>
-                        {t('cancel')}
-                      </button>
-                      <button
-                        type="button"
-                        className="automation-button is-danger"
-                        disabled={pending}
-                        onClick={() => {
-                          setConfirmingTaskId(undefined)
-                          void act(task.id, `/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' })
-                        }}
-                      >
-                        <Icon name="trash" />{t('confirmDelete')}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="automation-task-secondary">
-                      {latestSession !== undefined && (
-                        <button type="button" className="automation-text-button" onClick={() => ctx.sessions.open(latestSession as SessionId)}>
-                          <Icon name="external" size={14} />{t('openLatestSession')}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="automation-text-button"
-                        disabled={pending}
-                        onClick={() => {
-                          setConfirmingTaskId(undefined)
-                          setEditingTaskId(task.id)
-                        }}
-                      >
-                        <Icon name="edit" size={14} />{t('edit')}
-                      </button>
-                      <button
-                        type="button"
-                        className="automation-icon-button is-danger automation-delete"
-                        disabled={pending}
-                        aria-label={t('delete')}
-                        title={t('delete')}
-                        onClick={() => setConfirmingTaskId(task.id)}
-                      >
-                        <Icon name="trash" />
-                      </button>
-                    </div>
-                  )}
-
-                  <details className="automation-details">
-                    <summary>
-                      <span>{t('details')}</span>
-                      <Icon name="chevron" />
-                    </summary>
-                    <div className="automation-details-grid">
-                      <div className="automation-fact">
-                        <Icon name="calendar" />
-                        <span><b>{t('schedule')}</b>{scheduleLabel(task, locale, t)}</span>
-                      </div>
-                      <div className="automation-fact">
-                        <Icon name="folder" />
-                        <span><b>{t('workspace')}</b><code title={task.execution.cwd}>{basename(task.execution.cwd)}</code></span>
-                      </div>
-                      <div className="automation-fact">
-                        <Icon name="external" />
-                        <span><b>{t('executionDestination')}</b>{task.execution.target?.mode === 'pinned-session'
-                          ? t('executionPinned', { sessionId: `${task.execution.target.sessionId.slice(0, 12)}…` })
-                          : t('executionFresh')}</span>
-                      </div>
-                      <div className="automation-fact">
-                        <Icon name="shield" />
-                        <span><b>{t('permission')}</b><span className={task.security.permissionPreset === 'danger-full-access' ? 'automation-fact-danger' : undefined}>{permissionLabel(task.security.permissionPreset, t, task.permissionDisplayName)}</span></span>
-                      </div>
-                      <div className="automation-fact">
-                        <Icon name="cpu" />
-                        <span><b>{t('agentExecution')}</b>{executionLabel(task, t)}</span>
-                      </div>
-                      <div className="automation-fact">
-                        <Icon name="bell" />
-                        <span><b>{t('notifications')}</b>{notificationPolicyLabel(task.notificationPolicy, t)}</span>
-                      </div>
-                      {task.consecutiveFailures > 0 && (
-                        <div className="automation-fact">
-                          <Icon name="alert" />
-                          <span><b>{t('consecutiveFailures')}</b>{task.consecutiveFailures}</span>
-                        </div>
-                      )}
-                      {task.pauseAfterConsecutiveFailures && (
-                        <div className="automation-fact">
-                          <Icon name="pause" />
-                          <span><b>{t('pauseAfterFailures')}</b>{t('enabled')}</span>
-                        </div>
-                      )}
-                      <div className="automation-fact">
-                        <Icon name="copy" />
-                        <span><b>{t('taskId')}</b><code title={task.id}>{task.id}</code><CopyIdButton id={task.id} t={t} /></span>
-                      </div>
-                    </div>
-                  </details>
-
-                  {task.runs.length > 0 && (
-                    <details className="automation-history">
-                      <summary>
-                        <span>{t('recentRuns', { count: task.runs.length })}</span>
-                        <Icon name="chevron" />
-                      </summary>
-                      <ol>
-                        {[...task.runs].reverse().map((run) => {
-                          const duration = formatRunDuration(run.startedAt, run.finishedAt, locale)
-                          return <li key={run.id}>
-                            <span className={`automation-run-dot ${statusClass(run.status)}`} />
-                            <div className="automation-run-copy">
-                              <span className="automation-run-line">
-                                <b>{statusLabel(run.status, t)}</b>
-                                <span>·</span>
-                                <span>{triggerLabel(run.trigger, t)}</span>
-                                {duration !== undefined && <><span>·</span><span>{duration}</span></>}
-                              </span>
-                              <time dateTime={run.startedAt ?? run.enqueuedAt}>{formatDate(run.startedAt ?? run.enqueuedAt, locale)}</time>
-                              {run.summary !== undefined && <p className="automation-run-summary">{run.summary}</p>}
-                              {run.error !== undefined && <p className="automation-run-error">{run.error}</p>}
-                            </div>
-                            <div className="automation-run-actions">
-                              {['failed', 'timed_out', 'interrupted', 'outcome_unknown'].includes(run.status) && (
-                                <button type="button" className="automation-button is-compact" disabled={disabled} onClick={() => void act(task.id, `/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST' })}>
-                                  {t('retry')}
-                                </button>
-                              )}
-                              {run.sessionId !== undefined && (
-                                <button type="button" className="automation-button is-compact" onClick={() => ctx.sessions.open(run.sessionId as SessionId)}>
-                                  {t('open')}<Icon name="external" size={14} />
-                                </button>
-                              )}
-                            </div>
-                          </li>
-                        })}
-                      </ol>
-                    </details>
-                  )}
-                </article>
-              )
-            })}
+        {(error !== undefined || scheduler?.status === 'retrying' || scheduler?.status === 'stopped') && (
+          <div className="am-banners">
+            {error !== undefined && <p className="am-alert is-error" role="alert">{error}</p>}
+            {scheduler?.status === 'retrying' && (
+              <p className="am-alert is-warning" role="alert">
+                {t('schedulerRetrying', { error: scheduler.lastError ?? t('unknownError') })}
+              </p>
+            )}
+            {scheduler?.status === 'stopped' && <p className="am-alert is-error" role="alert">{t('schedulerStopped')}</p>}
           </div>
-        </div>
+        )}
+
+        {tasks.length === 0 ? (
+          <div className="am-body is-single">
+            {loading ? (
+              <div className="am-onboarding" aria-live="polite">
+                <span className="am-onboarding-icon am-spin"><IconLoadingOutline16 size={24} /></span>
+                <h3>{t('loading')}</h3>
+              </div>
+            ) : (
+              <EmptyState t={t} creating={creatingExampleId} disabled={creationBlocked} onStart={(id, prompt) => void startExample(id, prompt)} />
+            )}
+          </div>
+        ) : (
+          <div className="am-body">
+            <div className="am-list-pane">
+              <div className="am-list-tools">
+                <Input
+                  icon={<IconSearchOutline16 />}
+                  value={query}
+                  placeholder={t('searchPlaceholder')}
+                  aria-label={t('searchPlaceholder')}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <div className="am-pill-group" role="group" aria-label={t('filterAll')}>
+                  {filters.map((entry) => (
+                    <Pill
+                      key={entry.id}
+                      type="button"
+                      active={filter === entry.id}
+                      aria-pressed={filter === entry.id}
+                      onClick={() => setFilter(entry.id)}
+                    >
+                      {entry.label}
+                    </Pill>
+                  ))}
+                </div>
+              </div>
+              <div className="am-list">
+                {visible.map((task) => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    locale={locale}
+                    t={t}
+                    selected={task.id === selectedId}
+                    onSelect={() => {
+                      setSelectedId(task.id)
+                      setEditing(false)
+                      setNarrowDetail(true)
+                    }}
+                  />
+                ))}
+                {visible.length === 0 && (
+                  <div className="am-list-empty">
+                    <p>{needle === '' ? t('noAutomations') : t('noMatches', { query: query.trim() })}</p>
+                    {needle !== '' && (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setQuery('')}>{t('clearSearch')}</Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="am-detail-pane">
+              {selected === undefined || actions === undefined ? (
+                <p className="am-detail-hint">{t('selectTaskHint')}</p>
+              ) : editing ? (
+                <div className="am-detail">
+                  <header className="am-detail-header">
+                    <div className="am-detail-title">
+                      <h3>{t('editTask')}</h3>
+                      <span className="am-muted">{t('editingTask', { name: selected.name })}</span>
+                    </div>
+                    <Tooltip label={t('cancel')} side="bottom">
+                      <button type="button" className="am-icon-button" aria-label={t('cancel')} onClick={() => setEditing(false)}>
+                        <IconCloseOutline16 />
+                      </button>
+                    </Tooltip>
+                  </header>
+                  <TaskEditor
+                    task={selected}
+                    saving={actingTaskId === selected.id}
+                    t={t}
+                    onSave={(body) => void updateTask(selected.id, body)}
+                    onCancel={() => setEditing(false)}
+                  />
+                </div>
+              ) : (
+                <TaskDetail
+                  task={selected}
+                  locale={locale}
+                  t={t}
+                  pending={actingTaskId === selected.id}
+                  actions={actions}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
-      {editingTask !== undefined && (
-        <div ref={editorRef} tabIndex={-1} className="automation-editor-layer" role="dialog" aria-modal="true" aria-label={t('editTask')}>
-          <EditTaskForm
-            task={editingTask}
-            saving={actingTaskId === editingTask.id}
-            t={t}
-            onSave={(body) => void updateTask(editingTask.id, body)}
-            onCancel={() => setEditingTaskId(undefined)}
-          />
-        </div>
-      )}
+      <Modal
+        open={deletingTask !== undefined}
+        onClose={() => setDeletingId(undefined)}
+        title={t('deleteTitle')}
+        closeLabel={t('close')}
+        description={deletingTask === undefined ? '' : t('deleteConfirm', { name: deletingTask.name })}
+        footer={
+          <>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setDeletingId(undefined)}>{t('cancel')}</Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              icon={<IconWarningOutline16 />}
+              onClick={() => {
+                const id = deletingId
+                setDeletingId(undefined)
+                if (id !== undefined) void act(id, `/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' })
+              }}
+            >
+              {t('confirmDelete')}
+            </Button>
+          </>
+        }
+      >
+        {deletingTask !== undefined && <StatusTag status={deletingTask.running ? 'running' : deletingTask.status} t={t} />}
+      </Modal>
     </div>
   )
 }
@@ -1249,6 +635,6 @@ export function apply(ctx: Context): () => void {
   ]
   return () => {
     for (const dispose of disposers.reverse()) dispose()
-    setPanelOpen(false)
+    resetStore()
   }
 }
