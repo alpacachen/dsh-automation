@@ -16,7 +16,6 @@ import {
   HoverCard,
   Input,
   Modal,
-  Pill,
   StateDot,
   Tooltip,
   IconAlarmClockOutline16,
@@ -36,6 +35,7 @@ import {
   formatDate,
   formatRelative,
   statusState,
+  statusLabel,
   StatusTag,
   IconCalendar,
   IconShield,
@@ -166,9 +166,8 @@ function TaskRow({ task, locale, t, selected, onSelect }: {
       <span className="am-row-body">
         <span className="am-row-name">{task.name}</span>
         <span className="am-row-meta">
-          {task.nextRunAt !== null
-            ? formatRelative(task.nextRunAt, locale)
-            : task.status === 'completed' ? t('statusCompleted') : t('statusPaused')}
+          {statusLabel(displayStatus, t)}
+          {task.nextRunAt !== null && <> · {formatRelative(task.nextRunAt, locale)}</>}
         </span>
       </span>
       {task.consecutiveFailures > 0 && (
@@ -255,8 +254,37 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
   const [deletingId, setDeletingId] = React.useState<string>()
   const [creatingExampleId, setCreatingExampleId] = React.useState<string>()
   const [narrowDetail, setNarrowDetail] = React.useState(false)
+  const [dirty, setDirty] = React.useState(false)
+  const [leaveAction, setLeaveAction] = React.useState<(() => void) | null>(null)
+  const saving = actingTaskId !== undefined
+  const guardLeave = React.useCallback((action: () => void) => {
+    if (saving) return
+    if (editing && dirty) setLeaveAction(() => action)
+    else action()
+  }, [editing, dirty, saving])
+  const closePanel = React.useCallback(() => guardLeave(() => setPanelOpen(false)), [guardLeave])
+  const cancelEditing = React.useCallback(() => guardLeave(() => { setEditing(false); setDirty(false) }), [guardLeave])
   const panelRef = React.useRef<HTMLElement | null>(null)
   const restoreFocusRef = React.useRef<HTMLElement | null>(null)
+  const wasEditing = React.useRef(false)
+
+  React.useEffect(() => {
+    const changed = editing !== wasEditing.current
+    wasEditing.current = editing
+    if (!open || !changed) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = panelRef.current?.querySelector<HTMLElement>(editing ? '#am-name' : '[data-am-edit]')
+      target?.focus()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [open, editing])
+
+  React.useEffect(() => {
+    if (!open || !editing || !dirty) return
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [open, editing, dirty])
 
   const ordered = React.useMemo(() => orderTasks(tasks), [tasks])
   const needle = query.trim().toLowerCase()
@@ -271,11 +299,11 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
   // dropped the selected task, or a filter that excluded it).
   React.useEffect(() => {
     if (!open) return
-    if (selected !== undefined && visible.some((task) => task.id === selected.id)) return
+    if (selected !== undefined && (editing || visible.some((task) => task.id === selected.id))) return
     const next = visible[0]
     setSelectedId(next?.id)
     setEditing(false)
-  }, [open, selected, visible])
+  }, [open, selected, visible, editing])
 
   React.useEffect(() => {
     if (open) void refresh()
@@ -284,32 +312,42 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
   React.useEffect(() => {
     if (!open) {
       setEditing(false)
+      setDirty(false)
+      setLeaveAction(null)
       setDeletingId(undefined)
       setNarrowDetail(false)
       return
     }
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
+      // Portaled menus and confirmation dialogs own their keyboard events.
+      if (!panelRef.current?.contains(event.target as Node)) return
       if (event.key === 'Escape') {
-        if (deletingId !== undefined) setDeletingId(undefined)
-        else if (editing) setEditing(false)
+        if (saving || leaveAction !== null || deletingId !== undefined) return
+        event.preventDefault()
+        if (editing) cancelEditing()
         else if (narrowDetail) setNarrowDetail(false)
-        else setPanelOpen(false)
+        else closePanel()
         return
       }
-      if (editing || deletingId !== undefined) return
+      if (editing || deletingId !== undefined || leaveAction !== null) return
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
       const active = document.activeElement
-      if (active instanceof HTMLElement && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
+      if (!(active instanceof HTMLElement) || !active.classList.contains('am-row')) return
       if (visible.length === 0) return
       event.preventDefault()
       const index = visible.findIndex((task) => task.id === selectedId)
       const step = event.key === 'ArrowDown' ? 1 : -1
       const next = visible[Math.max(0, Math.min(visible.length - 1, (index === -1 ? 0 : index) + step))]
-      if (next !== undefined) setSelectedId(next.id)
+      if (next !== undefined) {
+        setSelectedId(next.id)
+        const rows = panelRef.current?.querySelectorAll<HTMLButtonElement>('.am-row')
+        rows?.[visible.indexOf(next)]?.focus()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, editing, deletingId, narrowDetail, visible, selectedId])
+  }, [open, editing, deletingId, narrowDetail, visible, selectedId, saving, leaveAction, cancelEditing, closePanel])
 
   React.useEffect(() => {
     if (!open) {
@@ -333,7 +371,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
       // management; trapping into the panel would fight them.
       if (!current.contains(document.activeElement)) return
       const focusables = Array.from(current.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
       )).filter((element) => !element.hasAttribute('disabled') && element.offsetParent !== null)
       const first = focusables[0]
       const last = focusables[focusables.length - 1]
@@ -372,6 +410,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
       clearError()
       await request(`/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(body) })
       await refresh()
+      setDirty(false)
       setEditing(false)
     } catch (reason) {
       reportError(reason instanceof Error ? reason.message : String(reason))
@@ -411,7 +450,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
     stop: () => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/stop`, { method: 'POST' }),
     pause: () => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/pause`, { method: 'POST' }),
     resume: (runNow: boolean) => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/resume`, { method: 'POST', body: JSON.stringify({ runNow }) }),
-    edit: () => setEditing(true),
+    edit: () => { setDirty(false); setEditing(true) },
     requestDelete: () => setDeletingId(selected.id),
     openSession,
     back: () => setNarrowDetail(false),
@@ -431,23 +470,23 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
       className="am-overlay"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) setPanelOpen(false)
+        if (event.target === event.currentTarget && leaveAction === null && deletingId === undefined) closePanel()
       }}
     >
       <section
         ref={panelRef}
         tabIndex={-1}
-        className={narrowDetail ? 'am-panel is-detail' : 'am-panel'}
+        className={`am-panel${narrowDetail ? ' is-detail' : ''}${tasks.length === 0 ? ' is-empty' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={t('automations')}
         aria-busy={loading}
       >
         <header className="am-header">
-          <span className="am-header-icon" aria-hidden="true"><IconAlarmClockOutline16 /></span>
-          <h2 className="am-header-title">{t('tasksHeading')}</h2>
-          <span className="am-header-count">{t('taskCount', { count: tasks.length })}</span>
-          <SchedulerHealth health={scheduler} locale={locale} t={t} />
+          <div className="am-header-heading">
+            <h2 className="am-header-title">{t('tasksHeading')}</h2>
+            <span className="am-header-count">{t('taskCount', { count: tasks.length })}</span>
+          </div>
           <span className="am-spacer" />
           <Tooltip label={creationBlocked ? t('requiresWorkspace') : t('newAutomation')} side="bottom" disabled={false}>
             <Button
@@ -456,7 +495,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
               size="sm"
               icon={<IconPlusOutline16 />}
               disabled={creationBlocked || creatingExampleId !== undefined}
-              onClick={() => void startExample('new', t('guidedCreationPrompt'))}
+              onClick={() => guardLeave(() => void startExample('new', t('guidedCreationPrompt')))}
             >
               {creatingExampleId === 'new' ? t('creatingConversation') : t('newAutomation')}
             </Button>
@@ -467,7 +506,7 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
             </button>
           </Tooltip>
           <Tooltip label={t('close')} side="bottom">
-            <button type="button" className="am-icon-button" aria-label={t('close')} onClick={() => setPanelOpen(false)}>
+            <button type="button" className="am-icon-button" aria-label={t('close')} onClick={closePanel}>
               <IconCloseOutline16 />
             </button>
           </Tooltip>
@@ -492,6 +531,13 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                 <span className="am-onboarding-icon am-spin"><IconLoadingOutline16 size={24} /></span>
                 <h3>{t('loading')}</h3>
               </div>
+            ) : error !== undefined ? (
+              <div className="am-onboarding">
+                <IconWarningOutline16 size={24} />
+                <h3>{t('loadFailed')}</h3>
+                <p>{t('loadFailedHint')}</p>
+                <Button type="button" variant="outline" size="sm" onClick={() => void refresh()}>{t('retry')}</Button>
+              </div>
             ) : (
               <EmptyState t={t} creating={creatingExampleId} disabled={creationBlocked} onStart={(id, prompt) => void startExample(id, prompt)} />
             )}
@@ -505,19 +551,19 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                   value={query}
                   placeholder={t('searchPlaceholder')}
                   aria-label={t('searchPlaceholder')}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => { const value = event.target.value; guardLeave(() => { setEditing(false); setQuery(value) }) }}
                 />
                 <div className="am-pill-group" role="group" aria-label={t('filterAll')}>
                   {filters.map((entry) => (
-                    <Pill
+                    <button
+                      className={filter === entry.id ? 'am-tab is-active' : 'am-tab'}
                       key={entry.id}
                       type="button"
-                      active={filter === entry.id}
                       aria-pressed={filter === entry.id}
-                      onClick={() => setFilter(entry.id)}
+                      onClick={() => guardLeave(() => { setEditing(false); setFilter(entry.id) })}
                     >
                       {entry.label}
-                    </Pill>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -530,18 +576,19 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                     t={t}
                     selected={task.id === selectedId}
                     onSelect={() => {
-                      setSelectedId(task.id)
-                      setEditing(false)
-                      setNarrowDetail(true)
+                      if (task.id === selectedId) { setNarrowDetail(true); return }
+                      guardLeave(() => {
+                        setSelectedId(task.id)
+                        setEditing(false)
+                        setNarrowDetail(true)
+                      })
                     }}
                   />
                 ))}
                 {visible.length === 0 && (
                   <div className="am-list-empty">
-                    <p>{needle === '' ? t('noAutomations') : t('noMatches', { query: query.trim() })}</p>
-                    {needle !== '' && (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setQuery('')}>{t('clearSearch')}</Button>
-                    )}
+                    <p>{needle === '' ? t('noFilteredTasks') : t('noMatches', { query: query.trim() })}</p>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => { setQuery(''); setFilter('all') }}>{t('resetFilters')}</Button>
                   </div>
                 )}
               </div>
@@ -558,21 +605,24 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                       <span className="am-muted">{t('editingTask', { name: selected.name })}</span>
                     </div>
                     <Tooltip label={t('cancel')} side="bottom">
-                      <button type="button" className="am-icon-button" aria-label={t('cancel')} onClick={() => setEditing(false)}>
+                      <button type="button" className="am-icon-button" aria-label={t('cancel')} onClick={cancelEditing}>
                         <IconCloseOutline16 />
                       </button>
                     </Tooltip>
                   </header>
                   <TaskEditor
+                    key={selected.id}
+                    onDirtyChange={setDirty}
                     task={selected}
                     saving={actingTaskId === selected.id}
                     t={t}
                     onSave={(body) => void updateTask(selected.id, body)}
-                    onCancel={() => setEditing(false)}
+                    onCancel={cancelEditing}
                   />
                 </div>
               ) : (
                 <TaskDetail
+                  key={selected.id}
                   task={selected}
                   locale={locale}
                   t={t}
@@ -583,8 +633,26 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
             </div>
           </div>
         )}
+        <footer className="am-panel-footer"><SchedulerHealth health={scheduler} locale={locale} t={t} />{dirty && editing && <span>{t('unsavedChanges')}</span>}</footer>
       </section>
 
+      <Modal
+        open={leaveAction !== null}
+        onClose={() => setLeaveAction(null)}
+        title={t('discardTitle')}
+        closeLabel={t('close')}
+        description={t('discardDescription')}
+        footer={<>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setLeaveAction(null)}>{t('keepEditing')}</Button>
+          <Button type="button" variant="primary" size="sm" onClick={() => {
+            const action = leaveAction
+            setLeaveAction(null)
+            setDirty(false)
+            setEditing(false)
+            action?.()
+          }}>{t('discardChanges')}</Button>
+        </>}
+      />
       <Modal
         open={deletingTask !== undefined}
         onClose={() => setDeletingId(undefined)}

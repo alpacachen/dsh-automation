@@ -70,6 +70,16 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
+/** Advanced settings stay available without crowding the primary editing flow. */
+function Disclosure({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <details className="am-editor-disclosure">
+      <summary className="am-form-section-title">{title}</summary>
+      <div className="am-form-grid">{children}</div>
+    </details>
+  )
+}
+
 /**
  * Filterable skill picker showing each skill's description and invocability,
  * with the current selection restated as removable chips.
@@ -98,6 +108,7 @@ function SkillPicker({ skills, options, disabled, t, onChange }: {
           value={query}
           disabled={disabled}
           placeholder={t('skillSearchPlaceholder')}
+          aria-label={t('skillSearchPlaceholder')}
           onChange={(event) => setQuery(event.target.value)}
         />
         {skills.length > 0 && (
@@ -159,12 +170,13 @@ function SkillPicker({ skills, options, disabled, t, onChange }: {
  * @param props.saving - a write is in flight; every control locks.
  * @returns the editor form.
  */
-export function TaskEditor({ task, saving, t, onSave, onCancel }: {
+export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }: {
   task: AutomationTaskView
   saving: boolean
   t: typeof translate
   onSave: (body: TaskUpdateBody) => void
   onCancel: () => void
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const fallbackInstant = task.schedule.kind === 'once'
     ? task.schedule.fireAt
@@ -217,23 +229,37 @@ export function TaskEditor({ task, saving, t, onSave, onCancel }: {
   const legacyPartialModelUnchanged = !modelChanged && ((task.execution.provider === undefined) !== (task.execution.model === undefined))
   const configValid = selectedPresetAvailable !== false && skillsAvailable && selectedPermission !== undefined &&
     (((provider === '') === (model === '')) || legacyPartialModelUnchanged)
-  const blocked = saving || optionsLoading || !configValid || !changed || (permissionChanged && !permissionConfirmed)
+  const requiredFieldsValid = name.trim() !== '' && prompt.trim() !== '' && (kind === 'once'
+    ? onceAt.trim() !== '' && Number.isFinite(new Date(onceAt).getTime())
+    : effectiveRrule.trim() !== '' && timeZone.trim() !== '' && startAt.trim() !== '')
+  const blocked = saving || optionsLoading || optionsError !== undefined || !configValid || !requiredFieldsValid || !changed || (permissionChanged && !permissionConfirmed)
 
+  React.useEffect(() => {
+    onDirtyChange?.(changed)
+  }, [changed, onDirtyChange])
+
+  const optionsRequestSequence = React.useRef(0)
   const loadOptions = React.useCallback(async (candidate?: string) => {
+    const sequence = ++optionsRequestSequence.current
     try {
       setOptionsLoading(true)
       setOptionsError(undefined)
       const query = candidate === undefined ? '' : `?agentPreset=${encodeURIComponent(candidate)}`
       const value = await request(`/tasks/${encodeURIComponent(task.id)}/options${query}`) as { options: AgentConfigurationOptions }
-      setOptions(value.options)
+      if (sequence === optionsRequestSequence.current) setOptions(value.options)
     } catch (reason) {
-      setOptionsError(reason instanceof Error ? reason.message : String(reason))
+      if (sequence === optionsRequestSequence.current) {
+        setOptionsError(reason instanceof Error ? reason.message : String(reason))
+      }
     } finally {
-      setOptionsLoading(false)
+      if (sequence === optionsRequestSequence.current) setOptionsLoading(false)
     }
   }, [task.id])
 
-  React.useEffect(() => { void loadOptions() }, [loadOptions])
+  React.useEffect(() => {
+    void loadOptions()
+    return () => { optionsRequestSequence.current += 1 }
+  }, [loadOptions])
 
   const presetOptions: SelectOption[] = [
     { value: '', label: t('hostDefault') },
@@ -281,6 +307,7 @@ export function TaskEditor({ task, saving, t, onSave, onCancel }: {
       className="am-editor"
       onSubmit={(event) => {
         event.preventDefault()
+        if (blocked || !event.currentTarget.reportValidity()) return
         const schedule: AutomationTaskView['schedule'] | undefined = !scheduleChanged
           ? undefined
           : kind === 'once'
@@ -367,7 +394,7 @@ export function TaskEditor({ task, saving, t, onSave, onCancel }: {
                 </div>
                 {advancedRule ? (
                   <div className="am-rule-advanced">
-                    <input className="am-input" required disabled={saving} value={rrule} placeholder="FREQ=WEEKLY;BYDAY=MO" onChange={(event) => setRrule(event.target.value)} />
+                    <input className="am-input" aria-label={t('recurrenceRule')} required disabled={saving} value={rrule} placeholder="FREQ=WEEKLY;BYDAY=MO" onChange={(event) => setRrule(event.target.value)} />
                     <small className="am-field-hint">{parsedRawRule === undefined ? t('unsupportedRuleHint') : t('advancedRuleHint')}</small>
                   </div>
                 ) : (
@@ -459,9 +486,27 @@ export function TaskEditor({ task, saving, t, onSave, onCancel }: {
           )}
         </Section>
 
-        <Section title={t('agentExecution')}>
-          {optionsError !== undefined && <p className="am-alert is-error is-full" role="alert">{t('optionsFailure', { error: optionsError })}</p>}
-          {optionsLoading && <p className="am-alert is-info is-full" aria-live="polite">{t('optionsLoading')}</p>}
+        {optionsLoading && <p className="am-alert is-info" role="status">{t('optionsLoading')}</p>}
+        {optionsError !== undefined && <p className="am-alert is-error" role="alert">{t('optionsFailure', { error: optionsError })}</p>}
+        {options?.modelFailures.map((failure) => (
+          <p key={failure.provider} className="am-alert is-error" role="alert">
+            {t('providerFailure', { provider: failure.provider, error: failure.error })}
+          </p>
+        ))}
+        {!configValid && !optionsLoading && optionsError === undefined && (
+          <p className="am-alert is-error" role="alert">{t('editorConfigInvalid')}</p>
+        )}
+        {(optionsError !== undefined || !configValid || (options?.modelFailures.length ?? 0) > 0) && !optionsLoading && (
+          <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => { void loadOptions(agentPreset) }}>
+            {t('retry')}
+          </Button>
+        )}
+        {!requiredFieldsValid && <p className="am-alert is-error" role="alert">{t('editorRequiredFields')}</p>}
+        {permissionChanged && !permissionConfirmed && (
+          <p className="am-alert is-warning" role="status">{t('permission')} · {t('confirmPermissionChange', { permission: selectedPermission?.name ?? permissionPreset })}</p>
+        )}
+
+        <Disclosure title={t('agentExecution')}>
           <Field
             full
             label={t('agentPreset')}
@@ -499,17 +544,12 @@ export function TaskEditor({ task, saving, t, onSave, onCancel }: {
               onChange={setModel}
             />
           </Field>
-          {options?.modelFailures.map((failure) => (
-            <p key={failure.provider} className="am-alert is-error is-full" role="alert">
-              {t('providerFailure', { provider: failure.provider, error: failure.error })}
-            </p>
-          ))}
           <Field full label={t('selectedSkills')}>
             <SkillPicker skills={skills} options={options} disabled={saving || optionsLoading} t={t} onChange={setSkills} />
           </Field>
-        </Section>
+        </Disclosure>
 
-        <Section title={t('notifications')}>
+        <Disclosure title={t('notifications')}>
           <Field label={t('notifications')}>
             <Select
               value={notificationPolicy}
@@ -531,9 +571,9 @@ export function TaskEditor({ task, saving, t, onSave, onCancel }: {
               onChange={setPauseAfterFailures}
             />
           </Field>
-        </Section>
+        </Disclosure>
 
-        <Section title={t('permission')}>
+        <Disclosure title={t('permission')}>
           <Field
             full
             label={t('permission')}
@@ -566,7 +606,7 @@ export function TaskEditor({ task, saving, t, onSave, onCancel }: {
               <span aria-hidden="true">{t('confirmPermissionChange', { permission: selectedPermission?.name ?? permissionPreset })}</span>
             </div>
           )}
-        </Section>
+        </Disclosure>
       </div>
 
       <footer className="am-editor-footer">
