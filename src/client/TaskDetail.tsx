@@ -4,7 +4,6 @@ import {
   DisclosureRow,
   Menu,
   StateDot,
-  Tag,
   Tooltip,
   IconAgentPresetOutline16,
   IconChevronLeftOutline14,
@@ -37,7 +36,6 @@ import {
   IconShield,
   statusLabel,
   statusState,
-  StatusTag,
   triggerLabel,
 } from './shared.js'
 
@@ -70,7 +68,7 @@ export function scheduleLabel(task: AutomationTaskView, locale: string, t: typeo
       .join(chinese ? '、' : ', ')
   }
   if (rule.frequency === 'MONTHLY' && rule.monthDay) detail = t('dayOfMonth', { day: rule.monthDay })
-  return [repeat, detail, task.schedule.timeZone].filter(Boolean).join(' · ')
+  return [repeat, detail, task.schedule.startAt.slice(11, 16), task.schedule.timeZone].filter(Boolean).join(' · ')
 }
 
 /** Localized notification policy. */
@@ -194,7 +192,7 @@ export interface TaskDetailActions {
 }
 
 /**
- * Everything known about one automation, with nothing collapsed by default.
+ * A focused overview with run history and configuration available on demand.
  * @param props.task - the selected automation.
  * @param props.pending - a write for this task is in flight.
  * @returns the detail pane.
@@ -207,6 +205,7 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
   actions: TaskDetailActions
 }) {
   const [menuOpen, setMenuOpen] = React.useState(false)
+  const [view, setView] = React.useState<'overview' | 'runHistory' | 'configuration'>('overview')
   const busy = task.running
   const disabled = busy || pending
   const displayStatus = busy ? 'running' : task.status
@@ -220,7 +219,7 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
       label: t('openLatestSession'),
       icon: <IconRightUpOutline16 />,
     }]),
-    { id: 'edit', label: t('edit'), icon: <IconEditOutline16 />, disabled: pending },
+    ...(task.status === 'paused' ? [{ id: 'resume-run', label: t('resumeAndRun'), icon: <IconPlayOutline16 />, disabled }] : []),
     { type: 'separator' as const, id: 'sep' },
     { id: 'delete', label: t('delete'), icon: <IconTrashOutline16 />, danger: true, disabled: pending },
   ]
@@ -234,7 +233,8 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
         <div className="am-detail-title">
           <h3>{task.name}</h3>
           <div className="am-detail-badges">
-            <StatusTag status={displayStatus} t={t} />
+            <span className="am-status"><StateDot state={statusState(displayStatus)} size={7} />{statusLabel(displayStatus, t)}</span>
+            <span className="am-detail-workspace" title={task.execution.cwd}>{basename(task.execution.cwd)}</span>
             {task.consecutiveFailures > 0 && (
               <Tooltip label={`${t('consecutiveFailures')} · ${task.consecutiveFailures}`} side="top">
                 <span className="am-failure-chip">
@@ -245,6 +245,7 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
             )}
           </div>
         </div>
+        <Button type="button" data-am-edit variant="ghost" size="sm" icon={<IconEditOutline16 />} disabled={pending} onClick={actions.edit}>{t('edit')}</Button>
         <Menu
           open={menuOpen}
           portal
@@ -253,7 +254,7 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
           onSelect={(id) => {
             setMenuOpen(false)
             if (id === 'open-latest' && latestSession !== undefined) actions.openSession(latestSession as SessionId)
-            if (id === 'edit') actions.edit()
+            if (id === 'resume-run') actions.resume(true)
             if (id === 'delete') actions.requestDelete()
           }}
           onClose={() => setMenuOpen(false)}
@@ -272,19 +273,20 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
             <>
               <strong>{formatRelative(task.nextRunAt, locale)}</strong>
               <span className="am-next-run-when">
-                {formatDate(task.nextRunAt, locale)}
+                {formatDate(task.nextRunAt, locale, task.schedule.kind === 'recurring' ? task.schedule.timeZone : undefined)}
                 {task.schedule.kind === 'recurring' ? ` · ${task.schedule.timeZone}` : ''}
               </span>
             </>
           ) : (
-            <strong className="am-muted">—</strong>
+            <strong className="am-muted">{task.status === 'paused' ? t('statusPaused') : task.status === 'completed' ? t('statusCompleted') : t('noScheduledRun')}</strong>
           )}
+          <span className="am-next-run-schedule">{scheduleLabel(task, locale, t)}</span>
         </div>
 
         <div className="am-actions">
-          <Button type="button" variant="primary" size="sm" icon={<IconPlayOutline16 />} disabled={disabled} onClick={actions.run}>
+          {!busy && <Button type="button" variant="outline" size="sm" icon={<IconPlayOutline16 />} disabled={disabled} onClick={actions.run}>
             {t('runNow')}
-          </Button>
+          </Button>}
           {busy && (
             <Button type="button" variant="outline" size="sm" icon={<IconStopFill16 />} disabled={pending} onClick={actions.stop}>
               {t('stopRun')}
@@ -300,16 +302,20 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
               <Button type="button" variant="outline" size="sm" icon={<IconPlayOutline16 />} disabled={pending} onClick={() => actions.resume(false)}>
                 {t('resume')}
               </Button>
-              <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => actions.resume(true)}>
-                {t('resumeAndRun')}
-              </Button>
+
             </>
           )}
-          <Button type="button" variant="ghost" size="sm" icon={<IconEditOutline16 />} disabled={pending} onClick={actions.edit}>
-            {t('edit')}
-          </Button>
         </div>
 
+        <nav className="am-detail-nav" aria-label={t('details')}>
+          {(['overview', 'runHistory', 'configuration'] as const).map((id) => (
+            <button key={id} type="button" className={view === id ? 'am-tab is-active' : 'am-tab'} aria-pressed={view === id} onClick={() => setView(id)}>
+              {t(id)}{id === 'runHistory' && task.runs.length > 0 && <span>{task.runs.length}</span>}
+            </button>
+          ))}
+        </nav>
+
+        {view === 'overview' && <>
         <section className="am-block">
           <h4 className="am-block-title">
             {t('promptLabel')}
@@ -322,13 +328,18 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
 
         {latestResult?.summary !== undefined && (
           <section className="am-block">
-            <h4 className="am-block-title">{t('latestResult')}</h4>
+            <h4 className="am-block-title">{t('latestResult')}
+              {latestResult.sessionId !== undefined && <span className="am-block-tools"><Button type="button" variant="ghost" size="sm" icon={<IconRightUpOutline14 />} onClick={() => actions.openSession(latestResult.sessionId as SessionId)}>{t('openSession')}</Button></span>}
+            </h4>
             <p className="am-summary">{latestResult.summary}</p>
           </section>
         )}
 
-        <section className="am-block">
-          <h4 className="am-block-title">{t('overview')}</h4>
+        {task.runs.length === 0 && <p className="am-detail-note">{t('noRuns')}</p>}
+        </>}
+
+        {view === 'configuration' && <section className="am-block">
+          <h4 className="am-block-title">{t('configuration')}</h4>
           <div className="am-facts">
             <Fact icon={<IconCalendar />} label={t('schedule')}>{scheduleLabel(task, locale, t)}</Fact>
             <Fact icon={<IconFolderOpenOutline16 />} label={t('workspace')}>
@@ -381,9 +392,9 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
               <span className="am-mono-row"><code>{task.id}</code><CopyButton value={task.id} t={t} /></span>
             </Fact>
           </div>
-        </section>
+        </section>}
 
-        <section className="am-block">
+        {view === 'runHistory' && <section className="am-block">
           <h4 className="am-block-title">
             {task.runs.length === 0 ? t('runHistory') : t('recentRuns', { count: task.runs.length })}
           </h4>
@@ -404,7 +415,7 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
               ))}
             </div>
           )}
-        </section>
+        </section>}
       </div>
     </div>
   )

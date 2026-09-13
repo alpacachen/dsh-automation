@@ -78,8 +78,8 @@ export function triggerLabel(trigger: string, t: typeof translate): string {
 }
 
 /** Absolute instant in the active locale. */
-export function formatDate(value: string, locale: string): string {
-  return new Date(value).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })
+export function formatDate(value: string, locale: string, timeZone?: string): string {
+  return new Date(value).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short', ...(timeZone === undefined ? {} : { timeZone }) })
 }
 
 /** Signed relative time using the largest natural clock unit. */

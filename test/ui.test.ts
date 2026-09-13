@@ -35,6 +35,16 @@ test('stylesheet themes entirely through DSH tokens', async () => {
   assert.match(css, /prefers-reduced-motion/)
 })
 
+test('typography uses one host family and a restrained two-role scale', async () => {
+  const css = await readFile(cssUrl, 'utf8')
+  assert.doesNotMatch(css, /Avenir|letter-spacing|font-weight:\s*(600|700|bold)|--dsw-font-.*strong/)
+  assert.doesNotMatch(css, /font-size:\s*(11|12|14|20|22|26)px/)
+  assert.match(css, /--dsw-font-base-16/)
+  assert.match(css, /--dsw-font-xs-13/)
+  // The sidebar entry keeps the host navigation's 14px; the panel does not.
+  assert.equal((css.match(/--dsw-font-s-14/g) ?? []).length, 1)
+})
+
 test('overlay is an accessible, dismissible dialog', async () => {
   const client = await readClient()
 
@@ -75,6 +85,31 @@ test('surfaces task lifecycle controls and state', async () => {
   assert.match(client, /t\('retry'\)/)
   assert.match(client, /health\.status === 'retrying'/)
   assert.match(client, /am-nav-badge/)
+})
+
+test('separates task content, history, and configuration without removing controls', async () => {
+  const client = await readClient()
+  assert.match(client, /\['overview', 'runHistory', 'configuration'\]/)
+  assert.match(client, /view === 'overview'/)
+  assert.match(client, /view === 'runHistory'/)
+  assert.match(client, /view === 'configuration'/)
+  assert.match(client, /am-editor-disclosure/)
+  assert.match(client, /<summary/)
+  assert.match(client, /schedule\.startAt\.slice\(11, 16\)/)
+  assert.match(client, /noFilteredTasks/)
+  assert.match(client, /loadFailedHint/)
+})
+
+test('protects unsaved edits and restricts arrow navigation to task rows', async () => {
+  const client = await readClient()
+  assert.match(client, /onDirtyChange=\{setDirty\}/)
+  assert.match(client, /editing && dirty/)
+  assert.match(client, /open=\{leaveAction !== null\}/)
+  assert.match(client, /t\('keepEditing'\)/)
+  assert.match(client, /t\('discardChanges'\)/)
+  assert.match(client, /classList\.contains\('am-row'\)/)
+  assert.match(client, /if \(blocked \|\| !event\.currentTarget\.reportValidity\(\)\) return/)
+  assert.match(client, /sequence === optionsRequestSequence\.current/)
 })
 
 test('renders every field the task carries', async () => {
