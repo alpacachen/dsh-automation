@@ -56,15 +56,11 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 
 默认每次运行新建会话。也可在**「编辑 → 执行目标」**中手动选择同一工作区的已有 Session，确认后让后续任务沿用其上下文与 Agent／模型配置，并应用任务权限。此设置不开放给 Agent 修改；目标忙碌或不可用时失败，不新建替代会话。
 
-### 📱 搭配 dsh-im
+## 📱 消息投递（可选）
 
-选择已有 Session 的一个用途，是搭配 [dsh-im](https://github.com/xmanrui/dsh-im) 将喝水提醒、每日简报等定时结果推送到手机：
+在**「编辑 → 消息投递」**中选择同 Host 的 [dsh-im](https://github.com/xmanrui/dsh-im) 机器人及已保存目标，确认后即可主动发送任务回复或失败报告，适合喝水提醒、每日简报等。**无需固定 Session，也无需开启双向同步**；未安装 dsh-im 不影响普通任务。目标配置见 [dsh-im 指南](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.md)。
 
-- 在 dsh-im 对应的私聊目标上开启**「会话双向同步」**（默认关闭）。
-- 将自动化执行目标设为 **IM 当前绑定的同一个 Session**，保持 DSH 与机器人连接在线。
-- 先「立即运行」一次确认手机收件；切换 IM 会话后，记得检查任务绑定。
-
-> 兼容性：dsh-im 还需支持 Automation 的插件来源轮次；只同步用户来源的版本即使开启双向同步也会跳过这些回复。配置细节见 [dsh-im 指南](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.md)。
+投递状态与任务结果分开记录：发送失败不会重跑任务，也不会自动重发；发送中重启会标为结果未知。因手动取消或关闭 Host 而中断的任务不触发报告。「平台已接受」不等于手机已收到；请保持机器人在线，并自行测试一次收件。
 
 ## 🎛️ 管理与编辑
 

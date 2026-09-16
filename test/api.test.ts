@@ -85,6 +85,34 @@ test('REST derives target metadata and forwards only explicit boolean confirmati
   ]) assert.equal((await patch(body)).status, 400)
 })
 
+test('delivery discovery and patches expose only explicit saved target configuration', async () => {
+  const current = { security: { permissionPreset: 'read-only' }, execution: { workspaceId: 'w', cwd: '/w' } }
+  const controller = {
+    get: () => current,
+    deliveryOptions: async (botId?: string) => ({ available: true, bots: [], targets: botId === 'bot' ? [{ targetId: 'phone', kind: 'user' }] : [] }),
+    update: async (_id: string, request: unknown) => request,
+  } as unknown as AutomationController
+  const route = setup(controller).route()
+  const headers = { 'x-dsh-automation': '1' }
+  const patch = (body: unknown) => invoke(route, 'PATCH', '/api/automation/v1/tasks/task', JSON.stringify(body), headers)
+  const options = await invoke(route, 'GET', '/api/automation/v1/delivery-options?botId=bot')
+  assert.equal(options.status, 200)
+  assert.deepEqual(options.value.options.targets, [{ targetId: 'phone', kind: 'user' }])
+  assert.equal((await invoke(route, 'GET', '/api/automation/v1/delivery-options?botId=')).status, 400)
+  assert.equal((await invoke(route, 'GET', '/api/automation/v1/delivery-options', undefined, { origin: 'https://evil.example' })).status, 403)
+  assert.deepEqual((await patch({ delivery: { botId: 'bot', targetId: 'phone' }, confirmDeliveryChange: true })).value.task,
+    { delivery: { botId: 'bot', targetId: 'phone' }, deliveryChangeConfirmed: true })
+  assert.deepEqual((await patch({ delivery: null })).value.task, { delivery: null })
+  assert.equal((await patch({ delivery: { botId: 'bot', targetId: 'phone' }, confirmDeliveryChange: false })).value.task.deliveryChangeConfirmed, undefined)
+  for (const body of [
+    { delivery: { botId: 'bot', targetId: 'phone', route: { chatId: 'forged' } } },
+    { delivery: { botId: '', targetId: 'phone' } },
+    { delivery: { botId: 'bot' } },
+    { delivery: { botId: 'bot', targetId: 'phone' }, confirmDeliveryChange: 'true' },
+    { deliveryChangeConfirmed: true },
+  ]) assert.equal((await patch(body)).status, 400)
+})
+
 test('HTTP API rejects cross-origin, unconfirmed, partial and unknown nested updates', async () => {
   const controller = {
     list: () => [], schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),

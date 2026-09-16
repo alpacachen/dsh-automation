@@ -35,8 +35,18 @@ let tasks = [
   { ...structuredClone(common), id: 'release', name: 'Release readiness check', status: 'paused', nextRunAt: null, consecutiveFailures: 2, runs: [{ ...common.runs[0], status: 'failed', error: 'Test service unavailable. Check the connection and retry.' }] },
   { ...structuredClone(common), id: 'archive', name: 'Archive weekly changes', status: 'completed', nextRunAt: null, runs: [] },
 ]
+tasks[0].runs[0].delivery = { botId: 'bot-alpha', targetId: 'report', status: 'failed', attemptedAt: instant(-86339000), finishedAt: instant(-86338000), error: 'Fixture bot offline' }
 let listError = false
 let optionError = false
+let deliveryError = false
+let deliveryAvailable = true
+const deliveryReads = []
+const deliveryGates = new Map()
+const deliveryBots = [{ botId: 'bot-alpha', channel: 'feishu' }, { botId: 'bot-beta', channel: 'telegram' }]
+const deliveryTargets = {
+  'bot-alpha': [{ targetId: 'report', name: 'Report chat', kind: 'user' }, { targetId: 'daily', name: 'Daily chat', kind: 'user' }],
+  'bot-beta': [{ targetId: 'phone', name: 'Phone chat', kind: 'chat' }],
+}
 const options = { presets: [], models: [], modelFailures: [], skills: [], permissions: [
   { id: 'read-only', name: 'Read only', sandbox: 'read-only', approval: 'never', default: true },
   { id: 'danger-full-access', name: 'Full access', sandbox: 'danger-full-access', approval: 'never', default: false },
@@ -54,13 +64,28 @@ try {
     if (!url.pathname.startsWith('/api/automation/v1/')) return route.fulfill({ status: 503, json: { error: 'Non-fixture APIs are disabled in this test.' } })
     const path = url.pathname.replace('/api/automation/v1', '')
     const method = route.request().method()
+    if (method === 'GET' && path === '/delivery-options') {
+      const botId = url.searchParams.get('botId') ?? ''
+      deliveryReads.push(botId)
+      const response = deliveryError ? { error: 'Fixture delivery options unavailable' } : {
+        options: { available: deliveryAvailable, bots: deliveryAvailable ? deliveryBots : [], targets: deliveryAvailable ? deliveryTargets[botId] ?? [] : [] },
+      }
+      const status = deliveryError ? 503 : 200
+      await deliveryGates.get(botId)
+      return route.fulfill({ status, json: response })
+    }
     if (method === 'GET' && path.endsWith('/options')) return route.fulfill({ status: optionError ? 503 : 200, json: optionError ? { error: 'Fixture options unavailable' } : { options } })
     if (method === 'GET' && path === '/tasks') return route.fulfill({ status: listError ? 503 : 200, json: listError ? { error: 'Fixture connection unavailable' } : { tasks, scheduler: { status: 'healthy', consecutiveFailures: 0 } } })
     writes.push({ path, method, body: route.request().postDataJSON() })
     const task = tasks.find((item) => path.split('/')[2] === item.id)
     if (method === 'PATCH' && task) {
-      const { execution, confirmSessionTargetChange, ...patch } = route.request().postDataJSON()
+      const { execution, confirmSessionTargetChange, delivery, confirmDeliveryChange, ...patch } = route.request().postDataJSON()
       Object.assign(task, patch)
+      if (delivery === null) delete task.delivery
+      else if (delivery !== undefined) {
+        assert.equal(confirmDeliveryChange, true)
+        task.delivery = delivery
+      }
       if (execution) {
         if (execution.target) assert.equal(confirmSessionTargetChange, true)
         task.execution = { ...task.execution, ...execution,
@@ -213,11 +238,15 @@ try {
   await page.getByRole('button', { name: /Run history/ }).click()
   await page.locator('.am-run').click()
   await page.getByText('Run ID', { exact: true }).waitFor()
+  await page.getByText('Message delivery: Fixture bot offline', { exact: true }).waitFor()
+  assert.match(await page.locator('.am-run').innerText(), /succeeded/)
+  assert.equal(await page.locator('.am-run').getByRole('button', { name: 'Retry', exact: true }).count(), 0, 'Delivery failure never offers rerunning a succeeded task')
   await assertTypography()
   await page.screenshot({ path: `${output}/history.png` })
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
-  assert.equal(await page.locator('.am-editor-disclosure').count(), 3)
+  assert.equal(await page.locator('.am-editor-disclosure').count(), 4)
   assert.equal(await page.locator('.am-editor-disclosure[open]').count(), 0)
+  assert.equal(deliveryReads.length, 0, 'Disabled delivery does not fetch bot metadata')
   await page.getByRole('button', { name: 'Save changes', exact: true }).waitFor()
   await page.locator('#am-name').fill('Weekly dependency watch · Edited')
   await page.getByText('Unsaved changes', { exact: true }).waitFor()
@@ -242,15 +271,16 @@ try {
   await page.locator('.am-editor-disclosure[open]').scrollIntoViewIfNeeded()
   await assertTypography()
   await page.screenshot({ path: `${output}/editor-advanced.png` })
-  // Manual-only session targeting: filter, confirmation, save and reset.
+  // Manual-only session targeting: selecting does not commit until Save.
+  const beforeTargetSave = writes.length
   await page.getByRole('button', { name: 'Session mode', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Use an existing session', exact: true }).click()
-  assert.equal(await page.locator('.am-editor-disclosure').count(), 2, 'Pinned sessions do not expose ignored fresh-agent controls')
+  assert.equal(await page.locator('.am-editor-disclosure').count(), 3, 'Pinned sessions do not expose ignored fresh-agent controls')
   assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true)
   await page.getByRole('button', { name: 'Target session', exact: true }).click()
   assert.equal(await page.getByRole('menuitem', { name: /Other workspace|Child conversation|Detached conversation|Archived conversation/ }).count(), 0)
   await page.getByRole('menuitem', { name: /Forked planning/ }).click()
-  await page.getByRole('switch', { name: 'I confirm future runs will use: Forked planning.', exact: true }).click()
+  assert.equal(await page.getByRole('switch', { name: /^I confirm future runs/ }).count(), 0)
   assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false)
   await page.getByRole('button', { name: 'Target session', exact: true }).click()
   await page.getByRole('menuitem', { name: /Release planning/ }).click()
@@ -258,8 +288,7 @@ try {
   await page.getByRole('button', { name: 'Target session', exact: true }).click()
   assert.equal(await page.getByRole('menuitem', { name: /Current workspace conversation/ }).count(), 0)
   await page.getByRole('menuitem', { name: /Release planning/ }).click()
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true)
-  await page.getByRole('switch', { name: 'I confirm future runs will use: Release planning.', exact: true }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false)
   await page.getByRole('textbox', { name: 'Search session title or ID' }).fill('')
   await page.getByRole('button', { name: 'Session mode', exact: true }).scrollIntoViewIfNeeded()
   await assertTypography()
@@ -277,6 +306,7 @@ try {
   await assertTypography()
   await page.screenshot({ path: `${output}/session-target-mobile.png` })
   await page.setViewportSize({ width: 1440, height: 1000 })
+  assert.equal(writes.length, beforeTargetSave, 'Session selection must not save implicitly')
   await page.getByRole('button', { name: 'Save changes', exact: true }).click()
   await page.locator('.am-editor').waitFor({ state: 'hidden' })
   const targetWrite = writes.filter((write) => write.method === 'PATCH').at(-1).body
@@ -286,8 +316,7 @@ try {
   assert.match(await page.getByRole('button', { name: 'Target session', exact: true }).innerText(), /Release planning/)
   await page.getByRole('button', { name: 'Session mode', exact: true }).click()
   await page.getByRole('menuitem', { name: 'New session for every run', exact: true }).click()
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true)
-  await page.getByRole('switch', { name: 'I confirm future runs will use: New session for every run.', exact: true }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false)
   await page.getByRole('button', { name: 'Save changes', exact: true }).click()
   await page.locator('.am-editor').waitFor({ state: 'hidden' })
   assert.deepEqual(writes.filter((write) => write.method === 'PATCH').at(-1).body.execution.target, { mode: 'fresh' })
@@ -326,7 +355,7 @@ try {
   await page.getByText(/No session list was received/).waitFor({ state: 'hidden' })
   await page.getByRole('button', { name: 'Target session', exact: true }).click()
   await page.getByRole('menuitem', { name: /Forked planning/ }).click()
-  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true, 'Retry must not confirm the destination')
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false, 'Selecting a valid destination permits explicit Save without another switch')
   await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
   await page.getByRole('button', { name: 'Discard changes', exact: true }).click()
   // Queued/running tasks lock the destination without blocking ordinary edits.
@@ -336,6 +365,8 @@ try {
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   assert.equal(await page.getByRole('button', { name: 'Session mode', exact: true }).isDisabled(), true)
   await page.getByText('Wait until queued or running work finishes before changing the session.').waitFor()
+  await page.locator('.am-editor-disclosure summary').filter({ hasText: /^Message delivery/ }).click()
+  assert.equal(await page.getByRole('switch', { name: 'Send via dsh-im', exact: true }).isDisabled(), true)
   await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
   firstTask.runs.pop()
   // A missing saved target remains visible and can be repaired by switching fresh.
@@ -346,9 +377,115 @@ try {
   assert.match(await page.getByRole('button', { name: 'Target session', exact: true }).innerText(), /missing-session/)
   await page.getByRole('button', { name: 'Session mode', exact: true }).click()
   await page.getByRole('menuitem', { name: 'New session for every run', exact: true }).click()
-  await page.getByRole('switch', { name: 'I confirm future runs will use: New session for every run.', exact: true }).click()
   await page.getByRole('button', { name: 'Save changes', exact: true }).click()
   await page.locator('.am-editor').waitFor({ state: 'hidden' })
+  // Delivery help is discoverable before enabling, by hover, keyboard, or tap.
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  const deliveryHelp = page.getByRole('button', { name: 'About message delivery', exact: true })
+  const helpText = page.getByText('Send Automation results and failure reports through dsh-im installed on the same Host. Configure a bot and save a target in dsh-im first. No pinned Session or two-way sync is required.', { exact: true })
+  await deliveryHelp.hover()
+  await helpText.waitFor()
+  await page.screenshot({ path: `${output}/message-delivery-help.png`, animations: 'disabled' })
+  assert.equal(await helpText.evaluate((el) => getComputedStyle(el).opacity), '1')
+  await page.mouse.move(0, 0)
+  await deliveryHelp.focus()
+  await helpText.waitFor()
+  await deliveryHelp.click()
+  assert.equal(await deliveryHelp.evaluate((el) => el.closest('details').open), false, 'Help must not toggle the section')
+  await helpText.waitFor()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+  // Optional direct delivery is independent of fresh/pinned execution and sidebar notifications.
+  const openDelivery = async () => {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await page.locator('.am-editor-disclosure summary').filter({ hasText: /^Message delivery/ }).click()
+  }
+  const saveDelivery = async () => {
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+    await page.locator('.am-editor').waitFor({ state: 'hidden' })
+    return writes.filter((write) => write.method === 'PATCH').at(-1).body
+  }
+  const confirmation = () => page.getByRole('switch', { name: /^I allow task results and failure reports/ })
+  await openDelivery()
+  const beforeDeliverySave = writes.length
+  await page.getByRole('switch', { name: 'Send via dsh-im', exact: true }).click()
+  await page.getByRole('button', { name: 'Bot', exact: true }).click()
+  await page.getByRole('menuitem', { name: /feishu · bot-alpha/ }).click()
+  await page.getByRole('button', { name: 'Saved target', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Report chat · report/ }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false)
+  assert.equal(await confirmation().count(), 0)
+  await page.getByRole('button', { name: 'Saved target', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Daily chat · daily/ }).click()
+  assert.equal(await confirmation().count(), 0, 'Saving the selected destination is the only confirmation')
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false)
+  await assertTypography()
+  await page.screenshot({ path: `${output}/message-delivery.png` })
+  assert.equal(writes.length, beforeDeliverySave, 'Delivery selection must not save implicitly')
+  assert.deepEqual(await saveDelivery(), { delivery: { botId: 'bot-alpha', targetId: 'daily' }, confirmDeliveryChange: true })
+  assert.equal(firstTask.execution.target.mode, 'fresh')
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByText('bot-alpha / daily', { exact: true }).waitFor()
+
+  // Slow responses from a previous bot must not populate the currently selected bot's targets.
+  await openDelivery()
+  await page.getByRole('button', { name: 'Saved target', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Daily chat · daily/ }).click()
+  let releaseOldDelivery
+  deliveryGates.set('bot-beta', new Promise((resolve) => { releaseOldDelivery = resolve }))
+  const oldDeliveryRequest = page.waitForRequest((request) => request.url().includes('/delivery-options?botId=bot-beta'))
+  await page.getByRole('button', { name: 'Bot', exact: true }).click()
+  await page.getByRole('menuitem', { name: /telegram · bot-beta/ }).click()
+  await oldDeliveryRequest
+  assert.match(await page.getByRole('button', { name: 'Saved target', exact: true }).innerText(), /Select a saved target/)
+  assert.equal(await confirmation().count(), 0)
+  await page.getByRole('button', { name: 'Bot', exact: true }).click()
+  await page.getByRole('menuitem', { name: /feishu · bot-alpha/ }).click()
+  releaseOldDelivery()
+  deliveryGates.delete('bot-beta')
+  await page.getByRole('button', { name: 'Saved target', exact: true }).click()
+  assert.equal(await page.getByRole('menuitem', { name: /Phone chat/ }).count(), 0)
+  await page.getByRole('menuitem', { name: /Report chat · report/ }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false)
+  assert.equal(await confirmation().count(), 0)
+  assert.deepEqual(await saveDelivery(), { delivery: { botId: 'bot-alpha', targetId: 'report' }, confirmDeliveryChange: true })
+
+  // A failed discovery request does not block unrelated edits or invent a destination patch.
+  deliveryError = true
+  await openDelivery()
+  await page.getByText(/Fixture delivery options unavailable/).waitFor()
+  await page.locator('#am-name').fill('Weekly dependency watch · Delivery')
+  assert.deepEqual(await saveDelivery(), { name: 'Weekly dependency watch · Delivery' })
+  await openDelivery()
+  await page.getByText(/Fixture delivery options unavailable/).waitFor()
+  deliveryError = false
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await page.getByText(/Fixture delivery options unavailable/).waitFor({ state: 'hidden' })
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+
+  // Missing saved destinations remain visible; preserving or disabling does not need rediscovery/consent.
+  firstTask.delivery = { botId: 'bot-removed', targetId: 'target-removed' }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await openDelivery()
+  await page.getByText(/The saved bot or target is unavailable/).waitFor()
+  assert.match(await page.getByRole('button', { name: 'Bot', exact: true }).innerText(), /bot-removed/)
+  await page.locator('#am-name').fill('Weekly dependency watch · Saved')
+  assert.deepEqual(await saveDelivery(), { name: 'Weekly dependency watch · Saved' })
+  await openDelivery()
+  await page.getByText(/The saved bot or target is unavailable/).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Bot', exact: true }).isDisabled(), false)
+  await page.getByRole('button', { name: 'Bot', exact: true }).click()
+  await page.getByRole('menuitem', { name: /feishu · bot-alpha/ }).click()
+  await page.getByRole('button', { name: 'Saved target', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Report chat · report/ }).click()
+  assert.deepEqual(await saveDelivery(), { delivery: { botId: 'bot-alpha', targetId: 'report' }, confirmDeliveryChange: true })
+  deliveryAvailable = false
+  await openDelivery()
+  await page.getByText(/dsh-im delivery is unavailable/).waitFor()
+  await page.getByRole('switch', { name: 'Send via dsh-im', exact: true }).click()
+  assert.equal(await confirmation().count(), 0)
+  assert.deepEqual(await saveDelivery(), { delivery: null })
+  assert.equal(firstTask.delivery, undefined)
+  deliveryAvailable = true
   await page.getByRole('textbox', { name: 'Search automations' }).fill('no matching task')
   await page.getByText('No automation matches “no matching task”.').waitFor()
   await page.getByRole('button', { name: 'Show all tasks' }).click()

@@ -52,6 +52,27 @@ export const AutomationSecuritySchema = z.strictObject({
 
 export const NotificationPolicySchema = z.enum(['failures', 'always', 'never'])
 
+export const AutomationDeliverySchema = z.strictObject({
+  botId: z.string().trim().min(1),
+  targetId: z.string().trim().min(1),
+})
+export type AutomationDelivery = z.infer<typeof AutomationDeliverySchema>
+
+const DeliveryInstant = Instant.refine((value) => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value)
+export const AutomationRunDeliverySchema = AutomationDeliverySchema.extend({
+  status: z.enum(['sending', 'sent', 'failed', 'unknown']),
+  attemptedAt: DeliveryInstant,
+  finishedAt: DeliveryInstant.optional(),
+  error: z.string().min(1).optional(),
+})
+export type AutomationRunDelivery = z.infer<typeof AutomationRunDeliverySchema>
+
+export interface AutomationDeliveryOptions {
+  readonly available: boolean
+  readonly bots: readonly { readonly botId: string; readonly channel: string }[]
+  readonly targets: readonly { readonly targetId: string; readonly name?: string; readonly kind: string }[]
+}
+
 export const AutomationRunSchema = z.strictObject({
   id: z.string().min(1),
   trigger: z.enum(['scheduled', 'manual']),
@@ -62,6 +83,7 @@ export const AutomationRunSchema = z.strictObject({
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'interrupted', 'outcome_unknown', 'timed_out', 'canceled']),
   sessionId: z.string().min(1).optional(),
   executionTarget: z.strictObject({ mode: z.enum(['fresh', 'pinned-session']), sessionId: z.string().min(1).optional() }).optional(),
+  delivery: AutomationRunDeliverySchema.optional(),
   summary: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
 })
@@ -83,6 +105,7 @@ export const AutomationTaskSchema = z.strictObject({
   unreadNotifications: z.number().int().nonnegative().default(0),
   execution: AutomationExecutionSchema,
   security: AutomationSecuritySchema,
+  delivery: AutomationDeliverySchema.optional(),
   runs: z.array(AutomationRunSchema),
 })
 
@@ -119,6 +142,8 @@ export interface CreateAutomationRequest {
 }
 
 export interface UpdateAutomationRequest {
+  readonly delivery?: AutomationDelivery | null
+  readonly deliveryChangeConfirmed?: true
   readonly name?: string
   readonly prompt?: string
   readonly schedule?: AutomationSchedule

@@ -31,6 +31,7 @@
 .am-icon-button, .am-back, .am-copy { display:inline-flex; flex:none; align-items:center; justify-content:center; width:32px; height:32px; padding:0; border:0; border-radius:7px; background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; }
 .am-icon-button:hover:not(:disabled), .am-back:hover, .am-copy:hover { background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary); }
 .am-icon-button:disabled { opacity:.45; cursor:default; }
+.am-help-button { width:20px; height:20px; margin-inline-start:6px; vertical-align:middle; }
 .am-back { display:none; }
 .am-panel-footer { display:flex; flex:none; align-items:center; justify-content:space-between; gap:12px; min-height:30px; padding:6px 20px; border-top:1px solid var(--dsw-alias-border-l2); color:var(--dsw-alias-label-tertiary); font:var(--dsw-font-xs-13); }
 .am-scheduler { display:inline-flex; align-items:center; gap:6px; font:var(--dsw-font-xs-13); white-space:nowrap; }

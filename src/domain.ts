@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { instant, latestDueOccurrence, nextOccurrence, validateSchedule } from './recurrence.js'
 import { AutomationStore } from './store.js'
+import { AutomationDeliverySchema, type AutomationDelivery, type AutomationRunDelivery } from './types.js'
 import type {
   AutomationRun,
   AutomationRunStatus,
@@ -35,6 +36,8 @@ export interface RunOutcome {
   readonly status: 'succeeded' | 'failed' | 'interrupted' | 'timed_out' | 'canceled'
   readonly sessionId?: string
   readonly summary?: string
+  /** Full own-turn text for delivery only; never persisted in the run record. */
+  readonly output?: string
   readonly error?: string
 }
 
@@ -71,8 +74,10 @@ function snapshotTarget(execution: AutomationTask['execution']): AutomationRun['
 
 function pruneRuns(task: AutomationTask, maxHistory: number): void {
   if (task.runs.length <= maxHistory) return
-  const active = task.runs.filter(nonTerminal)
-  const terminal = task.runs.filter((run) => !nonTerminal(run)).slice(-Math.max(0, maxHistory - active.length))
+  const retained = (run: AutomationRun) => nonTerminal(run) || run.delivery?.status === 'sending'
+  const active = task.runs.filter(retained)
+  const slots = Math.max(0, maxHistory - active.length)
+  const terminal = slots === 0 ? [] : task.runs.filter((run) => !retained(run)).slice(-slots)
   task.runs = [...terminal, ...active]
 }
 
@@ -84,13 +89,19 @@ export class AutomationDomain {
 
   async init(now: number): Promise<void> {
     await this.store.init()
-    const hasRunning = Object.values(this.store.snapshot().tasks).some((task) =>
-      task.runs.some((run) => run.status === 'running'),
+    const needsRecovery = Object.values(this.store.snapshot().tasks).some((task) =>
+      task.runs.some((run) => run.status === 'running' || run.delivery?.status === 'sending'),
     )
-    if (!hasRunning) return
+    if (!needsRecovery) return
     await this.store.mutate((state) => {
       for (const task of Object.values(state.tasks)) {
         for (const run of task.runs) {
+          if (run.delivery?.status === 'sending') {
+            run.delivery.status = 'unknown'
+            run.delivery.finishedAt = instant(now)
+            run.delivery.error = 'DSH restarted before delivery was recorded; the message may have been sent. It will not be resent automatically.'
+            if (run.status !== 'running' && task.notificationPolicy !== 'never' && !shouldNotify(task, run.status)) task.unreadNotifications += 1
+          }
           if (run.status !== 'running') continue
           run.status = 'outcome_unknown'
           run.finishedAt = instant(now)
@@ -177,12 +188,13 @@ export class AutomationDomain {
     if (this.store.snapshot().tasks[id] === undefined) {
       throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
     }
-    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined && request.permissionPreset === undefined && (request.execution === undefined || Object.keys(request.execution).length === 0)) {
+    if (request.name === undefined && request.prompt === undefined && request.schedule === undefined && request.notificationPolicy === undefined && request.pauseAfterConsecutiveFailures === undefined && request.permissionPreset === undefined && request.delivery === undefined && (request.execution === undefined || Object.keys(request.execution).length === 0)) {
       throw new Error('Supply at least one field to update.')
     }
     if (request.execution !== undefined) {
       validateExecutionPatch(request.execution)
     }
+    const delivery = request.delivery == null ? request.delivery : AutomationDeliverySchema.parse(request.delivery)
     const name = request.name?.trim()
     const prompt = request.prompt?.trim()
     if (name === '') throw new Error('Automation name must not be empty.')
@@ -206,7 +218,17 @@ export class AutomationDomain {
         }
         validateTarget({ ...task.execution, target }, true)
       }
+      if (delivery !== undefined) {
+        const changed = delivery === null ? task.delivery !== undefined
+          : task.delivery?.botId !== delivery.botId || task.delivery?.targetId !== delivery.targetId
+        if (changed) {
+          if (delivery !== null && request.deliveryChangeConfirmed !== true) throw new Error('Explicit user confirmation is required to enable or change message delivery.')
+          if (task.runs.some(nonTerminal)) throw new AutomationDomainError('invalid_state', 'Message delivery cannot change while an automation has a queued or running run.')
+        }
+      }
       await beforeCommit?.(structuredClone(task))
+      if (delivery === null) delete task.delivery
+      else if (delivery !== undefined) task.delivery = delivery
       if (name !== undefined) task.name = name
       if (prompt !== undefined) task.prompt = prompt
       if (request.notificationPolicy !== undefined) task.notificationPolicy = request.notificationPolicy
@@ -405,7 +427,7 @@ export class AutomationDomain {
     })
   }
 
-  async finishRun(taskId: string, runId: string, outcome: RunOutcome, now: number): Promise<void> {
+  async finishRun(taskId: string, runId: string, outcome: RunOutcome, now: number, delivery?: AutomationDelivery): Promise<void> {
     const task = this.store.snapshot().tasks[taskId]
     if (task === undefined || !task.runs.some((run) => run.id === runId && run.status === 'running')) return
     await this.store.mutate((state) => {
@@ -417,6 +439,9 @@ export class AutomationDomain {
       if (outcome.sessionId !== undefined) run.sessionId = outcome.sessionId
       if (outcome.summary !== undefined) run.summary = outcome.summary
       if (outcome.error !== undefined) run.error = outcome.error
+      if (delivery !== undefined && (outcome.status === 'succeeded' || failedOutcome(outcome.status))) {
+        run.delivery = { ...AutomationDeliverySchema.parse(delivery), status: 'sending', attemptedAt: instant(now) }
+      }
       if (outcome.status === 'succeeded') current.consecutiveFailures = 0
       else if (failedOutcome(outcome.status)) current.consecutiveFailures += 1
       if (shouldNotify(current, outcome.status)) current.unreadNotifications += 1
@@ -427,6 +452,22 @@ export class AutomationDomain {
         current.nextRunAt = null
       }
       pruneRuns(current, this.maxRunHistory)
+    })
+  }
+
+  /** Delivery settlement never changes execution status or failure counters. */
+  async finishDelivery(taskId: string, runId: string, delivery: AutomationRunDelivery): Promise<void> {
+    const matches = (run: AutomationRun | undefined) => run?.delivery?.status === 'sending'
+      && run.delivery.botId === delivery.botId && run.delivery.targetId === delivery.targetId
+      && run.delivery.attemptedAt === delivery.attemptedAt
+    if (!matches(this.store.snapshot().tasks[taskId]?.runs.find((run) => run.id === runId))) return
+    await this.store.mutate((state) => {
+      const task = state.tasks[taskId]
+      const run = task?.runs.find((entry) => entry.id === runId)
+      if (task === undefined || run === undefined || !matches(run)) return
+      run.delivery = { ...delivery }
+      if ((delivery.status === 'failed' || delivery.status === 'unknown') && task.notificationPolicy !== 'never' && !shouldNotify(task, run.status)) task.unreadNotifications += 1
+      pruneRuns(task, this.maxRunHistory)
     })
   }
 }

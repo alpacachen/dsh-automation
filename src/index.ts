@@ -10,6 +10,7 @@ import { AutomationController, validatePersistedSessionTarget } from './controll
 import { registerAutomationTools } from './tools.js'
 import { registerAutomationApi } from './api.js'
 import { AgentConfiguration } from './agent-configuration.js'
+import { deliveryOptions, sendAutomationResult, validateDelivery } from './im-delivery.js'
 
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-host-webserver'
@@ -62,9 +63,12 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const runner = new DshAutomationRunner(ctx, agentConfiguration)
   const scheduler = new AutomationScheduler(domain, runner, undefined, (error) => {
     ctx.logger.error(`automation scheduler failed and will retry: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
-  }, maxRunDurationMs)
+  }, maxRunDurationMs, (task, run, outcome, signal) => sendAutomationResult(ctx, task, run, outcome, signal))
   const controller = new AutomationController(domain, scheduler, undefined, agentConfiguration,
-    (task, sessionId) => validatePersistedSessionTarget(ctx, task, sessionId))
+    (task, sessionId) => validatePersistedSessionTarget(ctx, task, sessionId), {
+      options: (botId) => deliveryOptions(ctx, botId),
+      validate: (destination) => validateDelivery(ctx, destination),
+    })
   const toolCleanups = new Map<Agent, () => void>()
 
   const installTools = (agent: Agent) => {

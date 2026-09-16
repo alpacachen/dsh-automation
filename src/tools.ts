@@ -316,6 +316,9 @@ export function registerAutomationTools(
         const schedule = updateSchedule(args)
         const current = controller.get(args.id)
         const raw = args as Record<string, unknown>
+        if (['delivery', 'confirmDeliveryChange', 'deliveryChangeConfirmed'].some((key) => Object.hasOwn(raw, key))) {
+          throw new Error('Message delivery changes are manual-only in Automation settings.')
+        }
         if (['execution_mode', 'target_session_id', 'session_target_confirmed', 'execution', 'target', 'confirmSessionTargetChange'].some((key) => Object.hasOwn(raw, key))) {
           throw new Error('Session target changes are unsupported by automation_update; change the target manually in Automation settings.')
         }
