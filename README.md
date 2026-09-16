@@ -54,16 +54,7 @@ Use **New automation** at any time for a guided setup, or choose a result-focuse
 
 ## 📌 Manually select an existing Session
 
-Tasks create fresh sessions by default. To retain one conversation across runs, or write results into a session already bound to dsh-im, change the destination after creating the task:
-
-1. Open **Automations → select a task → Edit → Execution destination**.
-2. Change **Session mode** to **Use an existing session**.
-3. Search by title or Session ID and choose the destination.
-4. Confirm the target change and save. Future runs append their task and reply to this Session.
-
-Candidates are persisted, non-archived ordinary sessions in **the task's workspace**, including user-created forks but excluding subagents. Queued or running tasks cannot change destinations. When the task is idle, you can also switch back to fresh sessions. Creation behavior is unchanged; changing the destination afterward is manual-only and is not exposed through the Agent's `automation_update` tool.
-
-Pinned runs retain the session's context and Agent/model configuration without reinjecting selected skills. The task's permission preset is applied to that session. Busy, maintenance-locked, or unavailable targets fail the run without creating a replacement. Automation tracks only its own turn, and cancellation preserves queued human follow-ups.
+Runs create fresh sessions by default. In **Edit → Execution destination**, you can manually select and confirm an existing Session in the same workspace. Future runs retain its context and Agent/model configuration while applying the task's permissions. Agents cannot change this setting; a busy or unavailable target fails without creating a replacement.
 
 ### 📱 Pair with dsh-im
 
