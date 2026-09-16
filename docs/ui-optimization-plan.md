@@ -1,186 +1,155 @@
-# Automation 插件 UI / 交互优化方案
+# Automation UI and interaction optimization plan
 
-> 目标文件：`src/client/index.tsx`、`src/client/styles.css`、`src/client/locales.ts`
-> 约束：插件运行在 DSH Web 内，视觉必须吃 DSH 设计令牌（`--dsw-*`），因此本次优化的「辨识度预算」不花在新配色/新字体上，而花在信息架构、排版节奏和一个签名式组件上。
+> Target files: `src/client/index.tsx`, `src/client/styles.css`, `src/client/locales.ts`.
+> The plugin runs inside DSH Web and must use `--dsw-*` design tokens. Improve information architecture, spacing and meaningful components instead of adding colors or fonts.
+>
+> Historical implementation status: P0 (card restructuring and eight fixes) and P1 (run health strip and sectioned editor) landed with this PR. P2 (filters, search and empty-state guidance) remained pending; see section 5. Line references below describe that review snapshot.
 
-> **实施状态**：P0（卡片重构 + 8 项修复）与 P1（运行健康条 + 编辑分节视图）已随本 PR 落地；P2（状态筛选/搜索、空态引导）尚未实现，见第五节。
+## 1. Diagnosis
 
----
+### Information overload
 
-## 一、现状诊断（问题定位）
+Each task card shows eight fact rows, the latest result, up to seven buttons and collapsible history (`index.tsx:851-1015`). The three primary questions—task name, next run and current status—are obscured by technical details.
 
-### 1. 信息过载，没有层级（最难用的根因）
-
-每张任务卡一次性摊开 **8 行 facts + 最新结果 + 至多 7 个按钮 + 折叠的历史**（`index.tsx:851-1015`）。对人真正重要的只有三样：**叫什么、下次什么时候跑、现在什么状态**。这三样被淹没在原始技术数据里：
-
-| 当前展示 | 问题 |
+| Existing display | Problem |
 | --- | --- |
-| 任务 ID `automation-<uuid>`（`index.tsx:848`） | 纯内部噪音，对人无用 |
-| 工作区 `cwd` 文件系统路径（`:861`） | 开发者内部细节 |
-| `provider/model/skills` 拼成一串字符串（`:876`） | 无法扫读，且 3 个 fact 共用 `shield` 图标 |
-| `consecutiveFailures` 恒显示（`:883`） | 为 0 时是噪音 |
-| 「权限 / Agent 执行 / 通知」三个 fact 都用 `shield` 图标 | 语义混乱 |
+| `automation-<uuid>` at line 848 | Internal identifier dominates the overview |
+| Full workspace cwd at line 861 | Filesystem detail crowds the main view |
+| Combined provider/model/skills at line 876 | Difficult to scan; three facts share a shield icon |
+| Always-visible consecutive failures at line 883 | Adds noise when zero |
+| Shield icon for permission, execution and notifications | Conflicting semantics |
 
-### 2. 按钮汤（button soup）
+### Too many equal-weight actions
 
-`automation-task-actions`（`:904-974`）把「立即运行 / 停止 / 暂停 / 恢复 / 恢复并运行 / 打开最近会话 / 编辑 / 删除」平铺在一行，只有「立即运行」是主色。没有分组，没有主次，破坏性操作和低频操作和主操作同级。
+The actions row (lines 904-974) lists run, stop, pause, resume, resume-and-run, open latest session, edit and delete. Only Run now has primary styling. Destructive and infrequent actions compete with the main controls.
 
-### 3. 编辑表单内联展开，太重
+### Heavy inline editor
 
-点「编辑」后在 600px 抽屉的卡片内部展开约 15 个字段（`EditTaskForm`，`:290-636`），包含一整块「Agent 执行」配置（预设/提供商/模型/技能多选）＋ 可视化 RRULE 构造器 ＋ 权限确认。这是一个 modal 级别的信息量，却被塞进卡片里内联展开。
+Editing expands around fifteen fields within a card in a 600px drawer (`EditTaskForm`, lines 290-636). Agent settings, multiple skills, visual RRULE editing and permission confirmation require a dedicated editing surface.
 
-### 4. 状态语义混叠
+### Ambiguous states
 
-任务状态（`active/paused/completed`）与运行状态（`running/succeeded/failed…`）共用同一套 pill 样式和配色映射（`statusClass`，`:257`）。更严重的是**中文文案 bug**：
+Scheduling states (`active`, `paused`, `completed`) and run states (`running`, `succeeded`, `failed`, etc.) share pill styling (`statusClass`, line 257). The Chinese translation of `statusActive` at `locales.ts:272` incorrectly means running. An enabled but idle task therefore looks like an executing task. Translate active as enabled; reserve running for active execution.
 
-- `zh.statusActive = '运行中'`（`locales.ts:272`）——但任务 `active` 是「已启用/在调度」，不是「正在跑」；正在跑的是 `running`。
-- 结果：一个「已启用但空闲」的任务在中文界面显示「运行中」，与「正在执行」混淆。
+### Polling flicker
 
-### 5. 轮询闪烁
+Every refresh, including five-second background polling, sets loading to true (line 663) and marks the panel busy. List rerenders can reset scroll or flash empty/loading states.
 
-`refresh()`（`:663`）每次（包括每 5s 后台轮询）都 `setLoading(true)`，面板 `aria-busy={loading}`。后台刷新触发整列表重新渲染、可能引起滚动跳动和空态闪烁。
+### Icon semantics
 
-### 6. 图标语义错误
+The close icon also represents stopping runs and consecutive failures. Clock represents both navigation and upcoming runs; shield is reused for unrelated facts.
 
-`close` 图标被复用于「停止运行」「连续失败次数」和「关闭面板」三处；`clock` 同时用于导航入口和「下次运行」；`shield` 被三个无关 fact 复用。
+### Creation is not explained
 
-### 7. 「新建 / 模板」的交互模型没有说清
+New automation and three examples open a conversation and prefill an agent prompt instead of opening a creation form (`startExample`, line 726). The small `exampleDraftHint` does not adequately explain this transition.
 
-「新建自动化」和空态的 3 个模板，点击后**不打开表单，而是开一个对话、预填 prompt 让 Agent 用工具创建**（`startExample`，`:726`）。这是一个巧妙的交互，但界面没有把「这会跳转到对话」讲清楚——只有一行很小的 `exampleDraftHint`。
+### Accessibility and detail
 
-### 8. 可访问性与细节
+- The dialog at line 756 has `aria-modal` but no focus trap or focus restoration.
+- State and history dots rely on color without text alternatives.
+- Frequent 11px/12px labels and 30px buttons are dense and small for touch input.
 
-- `role="dialog" aria-modal="true"`（`:756`）但没有 focus trap、没有关闭后 focus restore。
-- 状态全靠颜色 + 小圆点，运行历史的圆点（`automation-run-dot`）没有文本替代。
-- 大量 `xxxs-11 / xxs-12` 字号 + 30px 按钮，密度过高、触控目标偏小。
+## 2. Design direction
 
----
+### Purpose and audience
 
-## 二、设计方向
+This is a scheduler for one-time and recurring agent work, aimed at developers checking task health from the sidebar. Make health and next-run timing immediately clear, with quick run, pause and edit actions.
 
-### 主题与受众
+### Host tokens and typography
 
-- **产品**：DSH 的自动化任务管理器——「给 Agent 安排一次性/周期性工作」的 cron。
-- **受众**：技术型用户（开发者），在侧栏里快速查看「我安排的工作都还正常吗」。
-- **单一职责**：让用户**一眼看懂每项任务的健康度与下次触发时间，并快速执行 / 暂停 / 编辑**。
+Continue using host color and font tokens. Strengthen hierarchy with task names at 15–17px/600, metadata at 12–13px and auxiliary timestamps at 11px. The existing 15px name and 12px facts provide insufficient hierarchy.
 
-### 令牌与排版（继承 DSH）
+Arrange cards as a name/status/next-run header, a health strip, a short summary and prioritized actions. Move technical details into a disclosure or editor.
 
-- 颜色：继续全部使用 `--dsw-alias-*` 令牌（品牌 / 成功 / 警告 / 错误 / 层级背景 / 边框）。不引入新色。
-- 字体：沿用 `--dsw-font-*`，但**重排层级**：任务名 → 主级（15-17px/600），元信息 → 次级（12-13px），辅助/时间戳 → 第三级（11px）。当前「任务名 15px」和「facts 12px」对比不足，是「难看」的观感来源之一。
-- 布局：卡片改为「**头（名称 + 状态 + 下次运行英雄数字）→ 一行健康条 → 一句摘要 → 主次分明的操作区**」，把技术细节收进「详情」或编辑弹层。
+### Run health strip
 
-### 签名元素：运行健康条（Run Health Strip）
+Summarize the last N results as colored segments: green for success, red for failure/timeout, gray for interrupted/unknown and blue for running. Hover reveals the summary, error and duration. Preserve full history behind a secondary disclosure, collapsed initially.
 
-把当前「折叠的、按时间倒序的、逐条文本」的运行历史（`:977-1015`），提炼成一条**最近 N 次运行结果的色段条**：
+The strip makes persistent failures or a new failure after a successful streak easy to see. Pair it with prominent relative next-run time and smaller absolute time/time-zone details.
 
-- 每个历史 run 是一小段，绿=成功、红=失败/超时、灰=中断/未知、蓝=进行中。
-- 鼠标悬停显示该次的摘要/错误/时长。
-- 点开仍可看完整历史（保留现有 `<details>`，但默认收起、作为二级入口）。
+## 3. Component changes
 
-这是「scheduler」世界里真正有信息量的东西：一次扫视就看出「最近一直在成功，今天挂了」还是「长期失败」。它把噪音变成了信号。
+### 3.1 Sidebar action
 
-配合的英雄元素：**下次运行相对时间**（「2 小时 15 分后」）作为卡片上最醒目的数字，旁边小字标绝对时间与时区。
+Preserve the icon and unread badge, showing its number only above zero. Consider the existing calendar icon to distinguish scheduled work from a generic clock.
 
----
+### 3.2 Panel header
 
-## 三、具体改造方案（组件级 before → after）
+Preserve Automations and task count. Explain that New opens a guided conversation. Add a segmented All/Active/Paused/Completed filter and name search as the list grows.
 
-### 3.1 侧栏入口 `AutomationButton`
+### 3.3 Task card
 
-- 保留时钟图标 + 未读角标（已经不错）。
-- 修正：未读 > 0 时角标数字；把 `clock` 换成更贴合「自动化/定时任务」的图标（如日历-时钟叠加，`calendar` 已存在）以区分普通时间入口。
-
-### 3.2 面板头 `automation-panel-header`
-
-- 保留「Automations + 任务数」。
-- 「新建自动化」按钮：明确文案改成「**新建 → 对话引导**」或在按钮下加一行说明，讲清会开对话。
-- 新增：**状态筛选 segmented control**（全部 / 已启用 / 已暂停 / 已完成）＋ **搜索框**（按名称过滤）。列表变多后这是硬需求。
-
-### 3.3 任务卡 `automation-task-card`（核心重构）
-
-```
-┌─────────────────────────────────────────────┐
-│ ● 名称 (15-17px/600)        [状态 pill]      │
-│                                             │
-│  下次运行   2h 15m   ← 英雄数字               │
-│            明天 09:00 · Asia/Shanghai        │
-│                                             │
-│  ▓▓▓▓▓▓▓░▓▓▓▓  ← 运行健康条(最近 N 次)       │
-│  最近一次：总结一句话…                        │
-│                                             │
-│  [立即运行]  [暂停]        ···   [删除]       │
-└─────────────────────────────────────────────┘
+```text
++-----------------------------------------------+
+| Task name                         Status      |
+|                                               |
+| Next run: 2h 15m                              |
+| Tomorrow 09:00, Asia/Shanghai                  |
+|                                               |
+| Recent run health strip                       |
+| Latest result: one-sentence summary            |
+|                                               |
+| [Run now] [Pause]                 [...]        |
++-----------------------------------------------+
 ```
 
-- **砍掉**：任务 ID、`cwd` 路径、provider/model/skills 长串、恒为 0 的连续失败数、3 个重复 shield fact。
-- **保留但降级**：工作区名（非路径）、权限（一句话 + 颜色暗示危险级别）、Agent 预设（仅当非默认时显示一个小标签），收进可展开的「详情」行。
-- **状态**：把「调度状态（启用/暂停/完成）」和「执行状态（正在跑）」拆成两个信号——pill 显示调度状态，健康条/脉冲显示执行状态。
+Remove raw task IDs, full cwd, combined provider/model/skills, always-zero failure counts and duplicate shield facts from the main surface. Preserve these details in an expandable area. Show the workspace name, concise permission description and a preset tag only when it differs from the default.
 
-### 3.4 操作区（解决按钮汤）
+Distinguish scheduling state from execution: the pill represents enabled/paused/completed, while the health strip or pulse represents execution.
 
-- **主操作**：`立即运行`（primary）。
-- **上下文操作**：根据状态只显示相关的 1 个（暂停↔恢复，停止运行）。
-- **二级操作**：收进右上角 `⋯` 溢出菜单：编辑、打开最近会话、删除。
-- 破坏性「删除」移入菜单，仍走内联二次确认（现有模式保留）。
+### 3.4 Actions
 
-### 3.5 编辑：从内联改为独立全屏抽屉/分节表单
+Use Run now as the primary action. Show one relevant contextual control: pause/resume or stop. Put edit, open latest session and delete in the overflow menu. Preserve deletion confirmation.
 
-- 点「编辑」→ 打开一个**覆盖全宽的第二层视图**（或真正 modal），不再是卡片内展开。
-- 表单分节 + 可折叠小节，按「使用频率 × 风险」排序：
-  1. 名称 + Prompt（Prompt 是核心内容，textarea 加高到 ≥ 5 行）
-  2. 计划（单次 / 周期，可视化 RRULE 构造器保留，高级模式收起）
-  3. 执行（Agent 预设 / 提供商 / 模型 / 技能——**默认收起**，只在改了 Host 默认时展开）
-  4. 通知与失败策略（通知策略 / 连续失败自动暂停）
-  5. 权限（危险/需审批的用醒目的警示条，保留确认勾选）
-- 保存按钮固定吸底，随时可见；标题栏带「取消」和「放弃更改」保护。
+### 3.5 Sectioned editor
 
-### 3.6 空态与模板
+Open a full-width second view or a real modal instead of expanding within a card. Order sections by frequency and risk:
 
-- 保留 3 个结果导向模板（内容本身不错），但强化「点击 → 打开对话、prompt 可改、不会自动发送」的暗示：每个模板卡加一个小「chat」角标或副文案。
-- 空态加「新建自动化（对话引导）」作为并列的主入口。
+1. Name and prompt; give the prompt at least five rows.
+2. Schedule: one-time/recurring, visual RRULE builder and collapsed advanced mode.
+3. Execution: preset, provider, model and skills; collapsed initially unless overriding host defaults.
+4. Notification and failure policies.
+5. Permissions: prominent risk/approval warning and the existing confirmation checkbox.
 
-### 3.7 轮询与加载
+Keep Save visible at the bottom. Include Cancel and protection against discarding changes.
 
-- 拆成两种状态：**首次加载**（显示骨架屏）与**后台静默刷新**（不置 loading、不重置滚动、不闪空态）。
-- 保留 5s 轮询但走「静默」路径；`aria-busy` 只在首次加载时为 true。
+### 3.6 Empty state and examples
 
-### 3.8 相对时间与本地化
+Keep all three outcome-oriented examples. Add a chat cue explaining that clicking opens a conversation, the prompt is editable and nothing is sent automatically. Provide New automation as another primary entry point.
 
-- `formatDate`（`:182`）增加相对时间（「5 分钟后 / 2 小时后 / 昨天」），与绝对时间并存。
-- 修复 `zh.statusActive`：`运行中 → 已启用`（`:272`）；`running` 保留「运行中」。
+### 3.7 Loading and polling
 
----
+Separate initial loading from silent refresh. Initial loading may show a skeleton and `aria-busy`; five-second background updates must not reset loading or scroll position.
 
-## 四、必须修的坑（独立于视觉，随方案一并修）
+### 3.8 Relative time and localization
 
-| # | 位置 | 问题 | 修复 |
+Add relative time alongside `formatDate`'s absolute time (line 182). Correct the Chinese active label to mean enabled, keeping the running label for actual execution.
+
+## 4. Required fixes
+
+| # | Location | Problem | Fix |
 | --- | --- | --- | --- |
-| 1 | `locales.ts:272` | 中文「active」误译为「运行中」，与 running 混淆 | `已启用` |
-| 2 | `index.tsx:663` | 每 5s 轮询都置 loading 引发闪烁/滚动跳动 | 拆首次加载 vs 静默刷新 |
-| 3 | `index.tsx:876,871,878` | 3 个 fact 共用 `shield` 图标 | 权限→shield、执行→robot/cpu、通知→bell |
-| 4 | `index.tsx:884` | 「连续失败」用 `close` 图标 | 移除或改用警示图标，且为 0 时不显示 |
-| 5 | `index.tsx:848` | 原始 UUID 直接展示 | 移除，或收进详情 + 「复制 ID」 |
-| 6 | `index.tsx:756` | dialog 无 focus trap / 无关闭后 focus 恢复 | 补 trap + restore |
-| 7 | `styles.css` 全程 | 30px 按钮 / 32px 图标按钮偏小 | 主按钮 ≥ 36px、图标按钮 ≥ 34px（触控友好） |
-| 8 | `index.tsx:467` | prompt textarea `rows={4}` 太小 | 加高并提示这是任务核心内容 |
+| 1 | `locales.ts:272` | Active translation means running | Translate it as enabled |
+| 2 | `index.tsx:663` | Polling sets loading every five seconds | Separate initial load and silent refresh |
+| 3 | `index.tsx:876,871,878` | Three unrelated shield icons | Permission: shield; execution: robot/CPU; notifications: bell |
+| 4 | `index.tsx:884` | Close icon means failure count | Remove or use a warning icon; hide at zero |
+| 5 | `index.tsx:848` | Raw UUID in overview | Move to details with Copy ID |
+| 6 | `index.tsx:756` | Missing focus trap/restore | Add both |
+| 7 | `styles.css` | Small button targets | Main buttons at least 36px; icon buttons at least 34px |
+| 8 | `index.tsx:467` | Four-row prompt textarea too small | Increase height and explain its role |
 
----
+## 5. Implementation sequence
 
-## 五、实施顺序（建议分阶段，每阶段可独立合入）
+1. **P0:** restructure cards and actions (3.3/3.4); highest benefit, medium risk.
+2. **P0:** the eight correctness/accessibility fixes; low risk.
+3. **P1:** health strip and prominent relative time.
+4. **P1:** independent sectioned editor.
+5. **P2:** filtering and search.
+6. **P2:** empty-state guidance.
 
-1. **P0 信息架构与卡片重构**（3.3 / 3.4）：砍噪音、分主次、操作区重排。收益最大、风险中。
-2. **P0 修复清单**（第四节 8 项）：文案 bug、轮询闪烁、图标语义、a11y。低风险高正确性。
-3. **P1 签名元素**（健康条 + 相对时间英雄）：3.8 / 二节。
-4. **P1 编辑分节视图**（3.5）：把内联表单改独立视图。
-5. **P2 筛选 / 搜索**（3.2）：列表规模增长后的能力。
-6. **P2 空态与引导暗示**（3.6）。
+Each phase can be reviewed and merged independently.
 
----
+## 6. Decisions to confirm
 
-## 六、待确认
-
-实现前想跟你对齐两点，避免返工：
-
-1. **编辑视图形态**：倾向「覆盖面板的独立第二层（全宽）」，比浏览器原生 modal 更贴合 DSH 抽屉的观感，且不丢上下文。可否？
-2. **是否顺手落一版可跑的实现**：先做 P0（卡片重构 + 8 项修复）给你看效果，再决定是否继续 P1/P2。
+1. Prefer a full-width second view within the panel, preserving the DSH drawer context, rather than a native browser modal.
+2. Implement and review P0 first, then decide whether to continue with P1/P2.

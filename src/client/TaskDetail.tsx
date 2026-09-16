@@ -62,10 +62,9 @@ export function scheduleLabel(task: AutomationTaskView, locale: string, t: typeo
       : t(interval === 1 ? 'everyMonth' : 'everyMonths', { count: interval })
   let detail = ''
   if (rule.frequency === 'WEEKLY' && rule.weekdays.length > 0) {
-    const chinese = locale.toLowerCase().startsWith('zh')
     detail = WEEKDAYS.filter((day) => rule.weekdays.includes(day))
-      .map((day) => `${chinese ? '周' : ''}${t(WEEKDAY_KEYS[day])}`)
-      .join(chinese ? '、' : ', ')
+      .map((day) => t('weekdayLabel', { day: t(WEEKDAY_KEYS[day]) }))
+      .join(t('weekdaySeparator'))
   }
   if (rule.frequency === 'MONTHLY' && rule.monthDay) detail = t('dayOfMonth', { day: rule.monthDay })
   return [repeat, detail, task.schedule.startAt.slice(11, 16), task.schedule.timeZone].filter(Boolean).join(' · ')
