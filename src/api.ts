@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+import { assertOverrideId, assertProviderModelPair } from './validation.js'
 import type { AutomationController } from './controller.js'
 import { AutomationDeliverySchema, AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
 
@@ -90,15 +91,13 @@ function parseExecutionPatch(value: unknown, execution: AutomationTask['executio
   const nullableString = (key: 'agentPreset' | 'provider' | 'model') => {
     const entry = input[key]
     if (entry !== undefined && entry !== null && typeof entry !== 'string') throw new Error(`execution.${key} must be a string or null.`)
-    if (typeof entry === 'string' && !entry.trim()) throw new Error(`execution.${key} must not be empty.`)
+    assertOverrideId(entry, `execution.${key}`)
     return entry as string | null | undefined
   }
   const agentPreset = nullableString('agentPreset')
   const provider = nullableString('provider')
   const model = nullableString('model')
-  if ((provider === undefined) !== (model === undefined) || (provider !== undefined && ((provider === null) !== (model === null)))) {
-    throw new Error('execution.provider and execution.model must be set or cleared together.')
-  }
+  assertProviderModelPair(provider, model)
   if (input.skills !== undefined && (!Array.isArray(input.skills) || input.skills.some((name) => typeof name !== 'string'))) {
     throw new Error('execution.skills must be an array of strings.')
   }

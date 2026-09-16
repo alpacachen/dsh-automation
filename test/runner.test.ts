@@ -4,9 +4,14 @@ import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { AutomationError } from '../src/errors.js'
 import { DshAutomationRunner } from '../src/runner.js'
 import type { AutomationRun, AutomationTask } from '../src/types.js'
 import { unattendedAgents } from '../src/runtime-marker.js'
+
+function rejectsWithCode(code: AutomationError['code']) {
+  return (error: unknown) => error instanceof AutomationError && error.code === code
+}
 
 const task: AutomationTask = {
   id: 'automation-test',
@@ -213,7 +218,7 @@ test('cold pinned Sessions use the Host restore pipeline instead of bare Agent r
   assert.equal(fake.disposed(), 0)
 
   fake.ctx.sessionController.resolveAgent = async () => ({ error: { message: 'Cannot restore saved model' } } as any)
-  await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /target_resume_failed: Cannot restore saved model/)
+  await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), (error: unknown) => error instanceof AutomationError && error.code === 'target_resume_failed' && /Cannot restore saved model/.test(error.message))
   Object.defineProperty(fake.ctx, 'sessionController', { value: undefined })
   await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /Host session controller is unavailable/)
   assert.deepEqual(fake.createdIds, [])
@@ -222,7 +227,7 @@ test('cold pinned Sessions use the Host restore pipeline instead of bare Agent r
 test('pinned runner rejects a missing stat snapshot without creating or resuming', async () => {
   const fake = fakeContext()
   fake.ctx.sessionPersistence.stat = async () => undefined
-  await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /target_session_not_found/)
+  await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), rejectsWithCode('target_session_not_found'))
   assert.deepEqual(fake.createdIds, [])
   assert.deepEqual(fake.resumedIds, [])
 })
@@ -241,7 +246,7 @@ test('pinned runner rejects busy or mismatched workspace targets', async () => {
     Object.defineProperty(handle.agent, 'status', { value: 'running' })
     return handle
   }
-  await assert.rejects(() => new DshAutomationRunner(busy.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), /target_session_busy/)
+  await assert.rejects(() => new DshAutomationRunner(busy.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), rejectsWithCode('target_session_busy'))
   assert.equal(busy.disposed(), 0, 'The Session controller owns the restored shared Agent')
 
   const mismatch = fakeContext()
@@ -250,7 +255,7 @@ test('pinned runner rejects busy or mismatched workspace targets', async () => {
     const snapshot = await stat(id)
     return snapshot === undefined ? undefined : { ...snapshot, header: { ...snapshot.header, cwd: '/other' } }
   }
-  await assert.rejects(() => new DshAutomationRunner(mismatch.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), /target_workspace_mismatch/)
+  await assert.rejects(() => new DshAutomationRunner(mismatch.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), rejectsWithCode('target_workspace_mismatch'))
 })
 
 test('pinned cancellation preserves a resumed handle that can now accept human input', async () => {
@@ -311,7 +316,7 @@ test('pinned runner does not touch a busy borrowed Agent or clear another run ma
   fake.agent.cancel = () => { canceled = true }
   unattendedAgents.add(fake.agent)
   try {
-    await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /target_session_busy/)
+    await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), rejectsWithCode('target_session_busy'))
     assert.equal(unattendedAgents.has(fake.agent), true)
     assert.equal(fake.disposed(), 0)
     assert.equal(fake.messages.length, 0)

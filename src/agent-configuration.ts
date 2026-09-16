@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { standingMountFor } from '@deepseek-ai/dsh-agent-presets'
 import { isUserInvocable, renderSkillContent, type SkillSummary } from '@deepseek-ai/dsh-skill'
+import { assertProviderModelPair } from './validation.js'
 import type { AgentConfigurationOptions, AutomationExecution, AutomationTask } from './types.js'
 
 import '@deepseek-ai/dsh-agent-presets'
@@ -83,9 +84,7 @@ export class AgentConfiguration {
   ): Promise<void> {
     const preset = await this.ctx.agentPresets.resolve(execution.agentPreset)
     if (preset.broken !== undefined) throw new Error(`Agent preset ${preset.id} is unavailable: ${preset.broken}`)
-    if ((execution.provider === undefined) !== (execution.model === undefined)) {
-      if (options.allowLegacyPartialModel !== true) throw new Error('provider and model must be set together.')
-    }
+    assertProviderModelPair(execution.provider, execution.model, { allowLegacyPartialModel: options.allowLegacyPartialModel === true })
     if (execution.provider !== undefined && execution.model !== undefined) {
       await this.ctx.llm.resolveCallConfig({ provider: execution.provider, model: execution.model! })
     }

@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AgentConfiguration } from '../src/agent-configuration.js'
 import type { AutomationRun, AutomationTask } from '../src/types.js'
 import { DshAutomationRunner } from '../src/runner.js'
+import { AutomationError } from '../src/errors.js'
 import { unattendedAgents } from '../src/runtime-marker.js'
 
 // Opt-in: use one installed Host dependency tree for the actual loop and all its
@@ -169,7 +170,7 @@ test('real loop maintenance is rejected without canceling user compaction or cha
   })
   try {
     assert.equal(f.agent.status, 'idle', 'The public status hides maintenance; it is not sufficient admission protection')
-    await assert.rejects(f.runner.run(f.task, f.run), /target_session_busy/)
+    await assert.rejects(f.runner.run(f.task, f.run), (error: unknown) => error instanceof AutomationError && error.code === 'target_session_busy')
     assert.equal(f.runner.cancel(f.run.id, 'manual'), false)
     assert.equal(maintenanceSignal.aborted, false)
     assert.deepEqual(f.permissions, [])

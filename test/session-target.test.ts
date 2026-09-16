@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { AutomationController, validatePersistedSessionTarget } from '../src/controller.js'
+import { AutomationError } from '../src/errors.js'
 import { AutomationDomain } from '../src/domain.js'
 import { AutomationStore } from '../src/store.js'
 import type { AutomationScheduler } from '../src/scheduler.js'
@@ -59,7 +60,7 @@ test('save rejects missing, wrong-workspace, nonmember, archived and subagent se
       if (kind === 'subagent') f.meta.origin = 'subagent'
       if (kind === 'id') f.meta.id = 'other'
       if (kind === 'workspacePath') f.workspace.path = '/other'
-      await assert.rejects(f.controller.update(f.task.id, { execution: { target: f.target, sessionTargetConfirmed: true } }), /target_(session|workspace)/)
+      await assert.rejects(f.controller.update(f.task.id, { execution: { target: f.target, sessionTargetConfirmed: true } }), (error: unknown) => error instanceof AutomationError && error.code.startsWith('target_'))
       assert.deepEqual(f.domain.get(f.task.id).execution.target, { mode: 'fresh' })
     })
   }

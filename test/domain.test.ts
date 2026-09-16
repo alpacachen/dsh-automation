@@ -73,7 +73,7 @@ test('execution updates set and clear overrides, replace ordered skills, and pre
   assert.equal(updated.security.grantedAt, task.security.grantedAt)
   const cleared = await domain.update(task.id, { execution: { agentPreset: null, provider: null, model: null, skills: [] } }, Date.parse('2026-03-20T03:00:00.000Z'))
   assert.deepEqual(cleared.execution, { workspaceId: 'workspace-test', cwd: '/tmp/test-workspace', skills: [] })
-  await assert.rejects(() => domain.update(task.id, { execution: { provider: 'only' } }, Date.now()), /set or cleared together/)
+  await assert.rejects(() => domain.update(task.id, { execution: { provider: 'only' } }, Date.now()), /set together/)
   await assert.rejects(() => domain.update(task.id, { execution: { skills: ['same', ' same '] } }, Date.now()), /unique/)
 })
 

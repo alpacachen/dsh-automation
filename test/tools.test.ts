@@ -186,7 +186,7 @@ test('pinned create requires durable target confirmation and update rejects targ
     session_target_confirmed: true, creation_confirmed: true,
   }, missing.exec)
   assert.equal(rejected.ok, false)
-  assert.match(rejected.error, /target_session_not_found/)
+  assert.match(rejected.error, /pinned session could not be resolved/)
   assert.equal(missing.calls.length, 0)
   const definition = fixture.byName('automation_update')
   for (const key of ['execution_mode', 'target_session_id', 'session_target_confirmed']) assert.equal(Object.hasOwn(definition.parameters, key), false)

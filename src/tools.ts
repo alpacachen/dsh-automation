@@ -3,6 +3,8 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { AutomationError } from './errors.js'
+import { assertProviderModelPair } from './validation.js'
 import type { AutomationController } from './controller.js'
 import type { AutomationSchedule, AutomationTaskView } from './types.js'
 import { AgentConfiguration } from './agent-configuration.js'
@@ -239,7 +241,7 @@ export function registerAutomationTools(
         const cwd = agent.session.header.cwd
         if (cwd === undefined) throw new Error('The current session has no workspace directory.')
         const workspace = await rootCtx.workspaceRegistry.create(cwd)
-        if ((args.provider === undefined) !== (args.model === undefined)) throw new Error('provider and model must be supplied together.')
+        assertProviderModelPair(args.provider, args.model)
         const currentModel = latestSessionModel(agent)
         const capturedProvider = args.provider ?? currentModel?.provider ?? agent.options.provider
         const capturedModel = args.model ?? currentModel?.model ?? agent.options.model
@@ -250,10 +252,10 @@ export function registerAutomationTools(
           const targetSessionId = args.target_session_id
           if (targetSessionId === undefined) throw new Error('target_session_id is required for pinned-session mode.')
           const persistence = rootCtx.get('sessionPersistence')
-          if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
+          if (persistence === undefined) throw new AutomationError('target_session_unavailable', 'persisted session inspection is unavailable.')
           const snapshot = await persistence.stat(SessionId(targetSessionId))
-          if (snapshot === undefined || snapshot.header.id !== SessionId(targetSessionId)) throw new Error('target_session_not_found: pinned session could not be resolved.')
-          if (snapshot.header.cwd !== cwd) throw new Error('target_workspace_mismatch: pinned session cwd does not match.')
+          if (snapshot === undefined || snapshot.header.id !== SessionId(targetSessionId)) throw new AutomationError('target_session_not_found', 'pinned session could not be resolved.')
+          if (snapshot.header.cwd !== cwd) throw new AutomationError('target_workspace_mismatch', 'pinned session cwd does not match.')
         }
         const task = await controller.create({
           name: args.name,
