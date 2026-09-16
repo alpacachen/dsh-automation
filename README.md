@@ -12,7 +12,7 @@ Run one-time or recurring tasks. Runs use a fresh visible session by default, or
 [![CI](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-22c55e)
 
-[简体中文](README.zh.md) · **English**
+[Simplified Chinese](README.zh.md) · **English**
 
 </div>
 

@@ -20,26 +20,26 @@ const writes = []
 const now = Date.now()
 const instant = (offset) => new Date(now + offset).toISOString()
 const common = {
-  prompt: '检查当前工作区的依赖清单和锁文件，关注安全风险与兼容性变化。\n\n不要修改文件。优先列出需要处理的问题，并给出具体建议。',
+  prompt: 'Inspect workspace dependency manifests and lockfiles for security risks and compatibility changes.\n\nDo not modify files. List actionable issues first and give concrete recommendations.',
   createdAt: instant(-86400000 * 8), createdBySessionId: 'fixture-creator', status: 'active', running: false,
   schedule: { kind: 'recurring', rrule: 'FREQ=WEEKLY;BYDAY=MO', startAt: '2026-09-01T09:30:00', timeZone: 'Asia/Shanghai' },
   nextRunAt: instant(3600000 * 20), notificationPolicy: 'failures', pauseAfterConsecutiveFailures: true,
   consecutiveFailures: 0, unreadNotifications: 0,
   execution: { workspaceId: 'fixture-workspace', cwd: '/preview/project', skills: [], target: { mode: 'fresh' } },
   security: { permissionPreset: 'read-only', source: 'user-confirmed', grantedAt: instant(-86400000) },
-  runs: [{ id: 'fixture-run', trigger: 'scheduled', enqueuedAt: instant(-86400000), startedAt: instant(-86400000), finishedAt: instant(-86340000), status: 'succeeded', sessionId: 'fixture-result', summary: '检查完成：未发现阻塞问题。\n建议在下次升级前复核两项依赖的兼容性说明。' }],
+  runs: [{ id: 'fixture-run', trigger: 'scheduled', enqueuedAt: instant(-86400000), startedAt: instant(-86400000), finishedAt: instant(-86340000), status: 'succeeded', sessionId: 'fixture-result', summary: 'Check complete: no blockers found.\nReview compatibility notes for two dependencies before the next upgrade.' }],
 }
 let tasks = [
-  { ...structuredClone(common), id: 'dependencies', name: '每周依赖巡检' },
-  { ...structuredClone(common), id: 'handoff', name: '工作日交接', nextRunAt: instant(86400000), schedule: { ...common.schedule, rrule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', startAt: '2026-09-01T18:00:00' } },
-  { ...structuredClone(common), id: 'release', name: '发布准备检查', status: 'paused', nextRunAt: null, consecutiveFailures: 2, runs: [{ ...common.runs[0], status: 'failed', error: '测试服务暂时不可用，请检查连接后重试。' }] },
-  { ...structuredClone(common), id: 'archive', name: '归档本周变更', status: 'completed', nextRunAt: null, runs: [] },
+  { ...structuredClone(common), id: 'dependencies', name: 'Weekly dependency watch' },
+  { ...structuredClone(common), id: 'handoff', name: 'Weekday handoff', nextRunAt: instant(86400000), schedule: { ...common.schedule, rrule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', startAt: '2026-09-01T18:00:00' } },
+  { ...structuredClone(common), id: 'release', name: 'Release readiness check', status: 'paused', nextRunAt: null, consecutiveFailures: 2, runs: [{ ...common.runs[0], status: 'failed', error: 'Test service unavailable. Check the connection and retry.' }] },
+  { ...structuredClone(common), id: 'archive', name: 'Archive weekly changes', status: 'completed', nextRunAt: null, runs: [] },
 ]
 let listError = false
 let optionError = false
 const options = { presets: [], models: [], modelFailures: [], skills: [], permissions: [
-  { id: 'read-only', name: '只读', sandbox: 'read-only', approval: 'never', default: true },
-  { id: 'danger-full-access', name: '完全访问', sandbox: 'danger-full-access', approval: 'never', default: false },
+  { id: 'read-only', name: 'Read only', sandbox: 'read-only', approval: 'never', default: true },
+  { id: 'danger-full-access', name: 'Full access', sandbox: 'danger-full-access', approval: 'never', default: false },
 ] }
 
 try {
@@ -109,11 +109,11 @@ try {
       const ReactDOM = window.__automationTestSeeds['react-dom/client']
       const components = {}
       let dictionaries
-      const snapshot = { active: 'zh' }
+      const snapshot = { active: 'en' }
       const ctx = {
         locale: {
           register(_namespace, values) { dictionaries = values; return () => {} },
-          bind() { return (key, params = {}) => Object.entries(params).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), dictionaries.zh[key]) },
+          bind() { return (key, params = {}) => Object.entries(params).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), dictionaries.en[key]) },
           subscribe() { return () => {} }, getSnapshot() { return snapshot },
         },
         slots: {
@@ -135,7 +135,7 @@ try {
         }),
       ))
     })
-    await page.getByRole('button', { name: '打开自动化任务', exact: true }).click()
+    await page.getByRole('button', { name: 'Open Automations', exact: true }).click()
     await page.locator('.am-panel').waitFor()
   }
   const assertTypography = async () => {
@@ -159,9 +159,9 @@ try {
   assert.equal(await page.locator('.am-row').count(), 4)
   await page.locator('.am-row').first().focus()
   await page.keyboard.press('ArrowDown')
-  assert.equal(await page.locator('.am-row.is-selected .am-row-name').innerText(), '工作日交接')
+  assert.equal(await page.locator('.am-row.is-selected .am-row-name').innerText(), 'Weekday handoff')
   await page.keyboard.press('ArrowUp')
-  assert.equal(await page.locator('.am-row.is-selected .am-row-name').innerText(), '每周依赖巡检')
+  assert.equal(await page.locator('.am-row.is-selected .am-row-name').innerText(), 'Weekly dependency watch')
   const lightBackground = await page.locator('.am-panel').evaluate((el) => getComputedStyle(el).backgroundColor)
   assert.notEqual(lightBackground, 'rgba(0, 0, 0, 0)', 'Host theme must be installed, not an unstyled false-positive')
   const panelBox = await page.locator('.am-panel').boundingBox()
@@ -171,34 +171,34 @@ try {
   await page.locator('.am-panel').focus()
   await assertTypography()
   await page.screenshot({ path: `${output}/overview.png` })
-  await page.getByRole('button', { name: '配置', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   assert.equal(await page.locator('.am-facts').count(), 1)
   await assertTypography()
-  await page.getByRole('button', { name: /运行历史/ }).click()
+  await page.getByRole('button', { name: /Run history/ }).click()
   await page.locator('.am-run').click()
-  await page.getByText('运行 ID', { exact: true }).waitFor()
+  await page.getByText('Run ID', { exact: true }).waitFor()
   await assertTypography()
   await page.screenshot({ path: `${output}/history.png` })
-  await page.getByRole('button', { name: '编辑', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
   assert.equal(await page.locator('.am-editor-disclosure').count(), 3)
   assert.equal(await page.locator('.am-editor-disclosure[open]').count(), 0)
-  await page.getByRole('button', { name: '保存修改', exact: true }).waitFor()
-  await page.locator('#am-name').fill('每周依赖巡检 · 已编辑')
-  await page.getByText('有未保存的修改', { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Save changes', exact: true }).waitFor()
+  await page.locator('#am-name').fill('Weekly dependency watch · Edited')
+  await page.getByText('Unsaved changes', { exact: true }).waitFor()
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: '继续编辑', exact: true }).click()
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click()
   await page.locator('.am-row').nth(1).click()
-  await page.getByRole('button', { name: '继续编辑', exact: true }).click()
-  assert.equal(await page.locator('#am-name').inputValue(), '每周依赖巡检 · 已编辑')
-  await page.getByRole('button', { name: '取消', exact: true }).last().click()
-  await page.getByRole('button', { name: '放弃修改', exact: true }).click()
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click()
+  assert.equal(await page.locator('#am-name').inputValue(), 'Weekly dependency watch · Edited')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click()
   assert.equal(await page.locator('.am-editor').count(), 0)
-  await page.getByRole('button', { name: '编辑', exact: true }).click()
-  await page.locator('#am-name').fill('每周依赖巡检 · 已保存')
-  await page.getByRole('button', { name: '保存修改', exact: true }).click()
-  await page.getByRole('heading', { name: '每周依赖巡检 · 已保存', exact: true }).waitFor()
-  assert.ok(writes.some((write) => write.method === 'PATCH' && write.body.name.endsWith('已保存')))
-  await page.getByRole('button', { name: '编辑', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.locator('#am-name').fill('Weekly dependency watch · Saved')
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await page.getByRole('heading', { name: 'Weekly dependency watch · Saved', exact: true }).waitFor()
+  assert.ok(writes.some((write) => write.method === 'PATCH' && write.body.name.endsWith('Saved')))
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
   await assertTypography()
   await page.screenshot({ path: `${output}/editor.png` })
   await page.locator('.am-editor-disclosure summary').first().click()
@@ -206,14 +206,14 @@ try {
   await page.locator('.am-editor-disclosure[open]').scrollIntoViewIfNeeded()
   await assertTypography()
   await page.screenshot({ path: `${output}/editor-advanced.png` })
-  await page.getByRole('button', { name: '取消', exact: true }).last().click()
-  await page.getByRole('textbox', { name: '搜索自动化' }).fill('no matching task')
-  await page.getByText('没有匹配“no matching task”的自动化。').waitFor()
-  await page.getByRole('button', { name: '查看全部任务' }).click()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+  await page.getByRole('textbox', { name: 'Search automations' }).fill('no matching task')
+  await page.getByText('No automation matches “no matching task”.').waitFor()
+  await page.getByRole('button', { name: 'Show all tasks' }).click()
   assert.equal(await page.locator('.am-row').count(), 4)
-  await page.locator('.am-list-tools').getByRole('button', { name: '已暂停', exact: true }).click()
+  await page.locator('.am-list-tools').getByRole('button', { name: 'Paused', exact: true }).click()
   assert.equal(await page.locator('.am-row').count(), 1)
-  await page.locator('.am-list-tools').getByRole('button', { name: '全部', exact: true }).click()
+  await page.locator('.am-list-tools').getByRole('button', { name: 'All', exact: true }).click()
   await page.setViewportSize({ width: 820, height: 680 })
   assert.equal(await page.locator('.am-detail-pane').isVisible(), true)
   assert.equal(await page.locator('.am-panel').evaluate((el) => el.scrollWidth > el.clientWidth), false)
@@ -224,7 +224,7 @@ try {
   await assertTypography()
   await page.screenshot({ path: `${output}/mobile-detail.png` })
   assert.equal(await page.locator('.am-panel').evaluate((el) => el.scrollWidth > el.clientWidth), false)
-  await page.getByRole('button', { name: '返回列表', exact: true }).click()
+  await page.getByRole('button', { name: 'Back to list', exact: true }).click()
   await assertTypography()
   await page.screenshot({ path: `${output}/mobile-list.png` })
   assert.equal(await page.locator('.am-detail-pane').isVisible(), false)
@@ -235,28 +235,28 @@ try {
   await page.screenshot({ path: `${output}/dark.png` })
   await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
   optionError = true
-  await page.getByRole('button', { name: '编辑', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
   await page.getByText(/Fixture options unavailable/).waitFor()
   optionError = false
-  await page.getByRole('button', { name: '重试', exact: true }).click()
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
   await page.getByText(/Fixture options unavailable/).waitFor({ state: 'hidden' })
-  await page.getByRole('button', { name: '取消', exact: true }).last().click()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
   // Lifecycle controls are exercised only against local fixture responses.
-  await page.getByRole('button', { name: '立即运行', exact: true }).click()
-  await page.getByRole('button', { name: '暂停', exact: true }).click()
-  await page.getByRole('button', { name: '恢复', exact: true }).click()
-  await page.getByRole('button', { name: '更多操作', exact: true }).click()
-  await page.getByRole('menuitem', { name: '删除', exact: true }).click()
-  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await page.getByRole('button', { name: 'Run now', exact: true }).click()
+  await page.getByRole('button', { name: 'Pause', exact: true }).click()
+  await page.getByRole('button', { name: 'Resume', exact: true }).click()
+  await page.getByRole('button', { name: 'More actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   assert.equal(tasks.length, 4)
-  await page.getByRole('button', { name: '更多操作', exact: true }).click()
-  await page.getByRole('menuitem', { name: '删除', exact: true }).click()
-  await page.getByRole('button', { name: '确认删除', exact: true }).click()
+  await page.getByRole('button', { name: 'More actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  await page.getByRole('button', { name: 'Delete task', exact: true }).click()
   await page.waitForFunction(() => document.querySelectorAll('.am-row').length === 3)
   assert.ok(writes.some((write) => write.method === 'DELETE'))
   tasks = []
-  await page.getByRole('button', { name: '刷新', exact: true }).click()
-  await page.getByRole('heading', { name: '从一个想法开始' }).waitFor()
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page.getByRole('heading', { name: 'Start with an idea' }).waitFor()
   const emptyBox = await page.locator('.am-panel').boundingBox()
   assert.equal(emptyBox.width, 640)
   assert.ok(emptyBox.height < panelBox.height, 'Empty state should fit its content, not reserve a full workspace')
@@ -268,13 +268,13 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 })
   listError = true
   await mount()
-  await page.getByRole('heading', { name: '暂时无法加载任务' }).waitFor()
+  await page.getByRole('heading', { name: 'Could not load tasks' }).waitFor()
   await assertTypography()
   await page.screenshot({ path: `${output}/error.png` })
   listError = false
-  await page.getByRole('button', { name: '重试', exact: true }).click()
-  await page.getByRole('heading', { name: '从一个想法开始' }).waitFor()
-  await page.getByRole('button', { name: '新建自动化', exact: true }).click()
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await page.getByRole('heading', { name: 'Start with an idea' }).waitFor()
+  await page.getByRole('button', { name: 'New automation', exact: true }).click()
   await page.waitForFunction(() => window.__automationOpenedSession === 'fixture-new-session')
   assert.equal(await page.locator('.am-panel').count(), 0)
   assert.deepEqual(errors.filter((message) => !message.includes('AUTOMATION_TEST_BOOT_STOP')), [])

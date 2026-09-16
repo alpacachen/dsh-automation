@@ -5,9 +5,9 @@ import type { PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-// 仅取模块增强：ctx.slots 由 renderer 声明，useSessions/sessionId 由 ui-session 声明，
-// useWorkspaces/ctx.uiWorkspace 由 ui-workspace 声明。类型导入会被编译擦除，
-// 不会在 lib/client.js 里留下 require()。
+// Type-only augmentations: renderer declares ctx.slots; ui-session declares useSessions/sessionId;
+// ui-workspace declares useWorkspaces/ctx.uiWorkspace. These imports are erased during compilation
+// and do not add require() calls to lib/client.js.
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
