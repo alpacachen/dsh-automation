@@ -6,11 +6,10 @@ import { AutomationStore } from './store.js'
 import { AutomationDomain } from './domain.js'
 import { AutomationScheduler, DEFAULT_MAX_RUN_DURATION_MS, MAX_TIMER_DELAY_MS } from './scheduler.js'
 import { DshAutomationRunner } from './runner.js'
-import { AutomationController } from './controller.js'
+import { AutomationController, validatePersistedSessionTarget } from './controller.js'
 import { registerAutomationTools } from './tools.js'
 import { registerAutomationApi } from './api.js'
 import { AgentConfiguration } from './agent-configuration.js'
-import { unattendedAgents, pendingUnattendedSessionIds } from './runtime-marker.js'
 
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-host-webserver'
@@ -64,11 +63,14 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const scheduler = new AutomationScheduler(domain, runner, undefined, (error) => {
     ctx.logger.error(`automation scheduler failed and will retry: ${error instanceof Error ? error.stack ?? error.message : String(error)}`)
   }, maxRunDurationMs)
-  const controller = new AutomationController(domain, scheduler, undefined, agentConfiguration)
+  const controller = new AutomationController(domain, scheduler, undefined, agentConfiguration,
+    (task, sessionId) => validatePersistedSessionTarget(ctx, task, sessionId))
   const toolCleanups = new Map<Agent, () => void>()
 
   const installTools = (agent: Agent) => {
-    if (agent.id.startsWith('automation-') || pendingUnattendedSessionIds.has(agent.id) || unattendedAgents.has(agent) || toolCleanups.has(agent)) return
+    // Normal resumed sessions remain usable by their human owner. Tool execution
+    // is guarded per automation turn rather than permanently omitting the tools.
+    if (agent.id.startsWith('automation-') || toolCleanups.has(agent)) return
     const dispose = registerAutomationTools(ctx, agent.ctx, agent, controller)
     toolCleanups.set(agent, dispose)
   }

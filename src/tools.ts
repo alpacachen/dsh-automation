@@ -6,11 +6,18 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { AutomationController } from './controller.js'
 import type { AutomationSchedule, AutomationTaskView } from './types.js'
 import { AgentConfiguration } from './agent-configuration.js'
+import { unattendedAgents } from './runtime-marker.js'
 
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-workspace'
 
-type PersistedSessionInspector = { inspect(id: SessionId): Promise<{ meta: { id: SessionId; cwd?: string } }> }
+import type {} from '@deepseek-ai/dsh-session-persistence'
+
+// Borrowed live Agents already have these tools installed. Keep unattended
+// runs from scheduling or mutating tasks without unregistering the user's tools.
+function assertInteractive(agent: Agent): void {
+  if (unattendedAgents.has(agent)) throw new Error('Automation tools are unavailable during an unattended run.')
+}
 
 function latestSessionModel(agent: Agent): { provider: string; model: string } | undefined {
   const events = agent.session.snapshotEvents()
@@ -185,6 +192,7 @@ export function registerAutomationTools(
     },
     async execute(args, exec) {
       try {
+        assertInteractive(agent)
         if (exec.agent !== agent) throw new Error('automation_options must run in its owning agent scope.')
         const candidate = args.agent_preset === undefined
           ? undefined
@@ -225,6 +233,7 @@ export function registerAutomationTools(
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
+        assertInteractive(agent)
         if (exec.agent !== agent) throw new Error('automation_create must run in its owning agent scope.')
         if (args.creation_confirmed !== true) throw new Error('Explicit user confirmation of the complete creation preview is required.')
         const cwd = agent.session.header.cwd
@@ -240,12 +249,11 @@ export function registerAutomationTools(
         if (mode === 'pinned-session') {
           const targetSessionId = args.target_session_id
           if (targetSessionId === undefined) throw new Error('target_session_id is required for pinned-session mode.')
-          const persistence = (rootCtx as Context & { sessionPersistence?: PersistedSessionInspector }).sessionPersistence
+          const persistence = rootCtx.get('sessionPersistence')
           if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
-          let inspection: { meta: { id: SessionId; cwd?: string } }
-          try { inspection = await persistence.inspect(SessionId(targetSessionId)) } catch { throw new Error('target_session_not_found: pinned session could not be resolved.') }
-          if (inspection.meta.id !== SessionId(targetSessionId)) throw new Error('target_session_not_found: pinned session could not be resolved.')
-          if (inspection.meta.cwd !== cwd) throw new Error('target_workspace_mismatch: pinned session cwd does not match.')
+          const snapshot = await persistence.stat(SessionId(targetSessionId))
+          if (snapshot === undefined || snapshot.header.id !== SessionId(targetSessionId)) throw new Error('target_session_not_found: pinned session could not be resolved.')
+          if (snapshot.header.cwd !== cwd) throw new Error('target_workspace_mismatch: pinned session cwd does not match.')
         }
         const task = await controller.create({
           name: args.name,
@@ -299,18 +307,18 @@ export function registerAutomationTools(
       skills: { type: 'array', items: { type: 'string' }, description: 'Replacement ordered selected skills; [] clears.' },
       permission_preset: { type: 'string', description: 'Replacement Host permission preset id for future runs.' },
       permission_confirmed: { type: 'boolean', description: 'Required and true only after the user explicitly confirms a permission change.' },
-      execution_mode: { type: 'string', enum: ['fresh', 'pinned-session'], description: 'Replacement execution destination.' },
-      target_session_id: { type: 'string', description: 'Replacement pinned session id.' },
-      session_target_confirmed: { type: 'boolean', description: 'Required when changing execution destination.' },
     },
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
+        assertInteractive(agent)
         if (exec.agent !== agent) throw new Error('automation_update must run in its owning agent scope.')
         const schedule = updateSchedule(args)
         const current = controller.get(args.id)
-        const targetChanged = args.execution_mode !== undefined || args.target_session_id !== undefined
-        if (targetChanged) throw new Error('Pinned session target changes are unsupported in MVP; use automation_create from the current conversation.')
+        const raw = args as Record<string, unknown>
+        if (['execution_mode', 'target_session_id', 'session_target_confirmed', 'execution', 'target', 'confirmSessionTargetChange'].some((key) => Object.hasOwn(raw, key))) {
+          throw new Error('Session target changes are unsupported by automation_update; change the target manually in Automation settings.')
+        }
         if (args.permission_preset !== undefined && args.permission_preset !== current.security.permissionPreset && args.permission_confirmed !== true) {
           throw new Error('Explicit user confirmation is required to change permissions.')
         }
@@ -349,6 +357,7 @@ export function registerAutomationTools(
     output: { schema: LIST_SCHEMA, render },
     async execute(_args, exec) {
       try {
+        assertInteractive(agent)
         if (exec.agent !== agent) throw new Error('automation_list must run in its owning agent scope.')
         return { ok: true as const, tasks: controller.list().map(summary) }
       } catch (error) {
@@ -367,6 +376,7 @@ export function registerAutomationTools(
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
+        assertInteractive(agent)
         if (exec.agent !== agent) throw new Error('automation_run must run in its owning agent scope.')
         const run = await controller.runNow(args.id)
         return { ok: true as const, id: run.id, status: run.status, message: `Queued manual run ${run.id} for ${args.id}.` }
@@ -398,6 +408,7 @@ export function registerAutomationTools(
       output: { schema: ACTION_SCHEMA, render },
       async execute(args, exec) {
         try {
+          assertInteractive(agent)
           if (exec.agent !== agent) throw new Error(`${definition.name} must run in its owning agent scope.`)
           const result = await definition.execute(args.id)
           if (typeof result === 'boolean' && !result) throw new Error(`Automation ${args.id} was not found.`)
@@ -420,6 +431,7 @@ export function registerAutomationTools(
     output: { schema: ACTION_SCHEMA, render },
     async execute(args, exec) {
       try {
+        assertInteractive(agent)
         if (exec.agent !== agent) throw new Error('automation_resume must run in its owning agent scope.')
         const task = await controller.resume(args.id, { runNow: args.run_now ?? false })
         return { ok: true as const, id: task.id, status: task.status, message: `Resumed ${task.id}; next run ${task.nextRunAt}.` }

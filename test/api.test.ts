@@ -64,6 +64,27 @@ test('HTTP API lists options and manages automations with confirmation and CSRF 
   fixture.dispose()
 })
 
+test('REST derives target metadata and forwards only explicit boolean confirmation', async () => {
+  const task = { security: { permissionPreset: 'read-only' }, execution: { workspaceId: 'w', cwd: '/task' } }
+  const controller = { get: () => task, update: async (_id: string, request: unknown) => request } as unknown as AutomationController
+  const route = setup(controller).route()
+  const headers = { 'x-dsh-automation': '1' }
+  const patch = (body: unknown) => invoke(route, 'PATCH', '/api/automation/v1/tasks/task', JSON.stringify(body), headers)
+  const pinned = await patch({ execution: { target: { mode: 'pinned-session', sessionId: 's' } }, confirmSessionTargetChange: true })
+  assert.equal(pinned.status, 200)
+  assert.deepEqual(pinned.value.task.execution, { target: { mode: 'pinned-session', sessionId: 's', workspaceId: 'w', cwd: '/task', fallback: 'fail' }, sessionTargetConfirmed: true })
+  const fresh = await patch({ execution: { target: { mode: 'fresh' } }, confirmSessionTargetChange: true })
+  assert.deepEqual(fresh.value.task.execution, { target: { mode: 'fresh' }, sessionTargetConfirmed: true })
+  const unconfirmed = await patch({ execution: { target: { mode: 'fresh' } } })
+  assert.equal(unconfirmed.value.task.execution.sessionTargetConfirmed, undefined)
+  for (const body of [
+    { execution: { target: { mode: 'fresh', cwd: '/evil' } } },
+    { execution: { target: { mode: 'pinned-session', sessionId: '' } } },
+    { execution: { target: { mode: 'fresh' } }, confirmSessionTargetChange: 'true' },
+    { execution: { target: { mode: 'fresh' }, sessionTargetConfirmed: true } },
+  ]) assert.equal((await patch(body)).status, 400)
+})
+
 test('HTTP API rejects cross-origin, unconfirmed, partial and unknown nested updates', async () => {
   const controller = {
     list: () => [], schedulerHealth: () => ({ status: 'healthy', consecutiveFailures: 0 }),
@@ -83,7 +104,7 @@ test('HTTP API rejects cross-origin, unconfirmed, partial and unknown nested upd
     confirmSessionTargetChange: true,
   }), headers)
   assert.equal(pinned.status, 400)
-  assert.equal(pinned.value.error, 'Pinned session target changes are unsupported via REST in MVP.')
+  assert.equal(pinned.value.error, 'execution.target is invalid.')
   assert.equal((await invoke(route, 'POST', '/api/automation/v1/tasks/task/resume', '{"runNow":"yes"}', headers)).status, 400)
   assert.equal((await invoke(route, 'PUT', '/api/automation/v1/tasks/task', undefined, headers)).status, 405)
   assert.equal((await invoke(route, 'GET', '/api/automation/v1/unknown')).status, 404)

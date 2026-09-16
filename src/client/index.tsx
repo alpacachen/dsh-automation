@@ -239,12 +239,12 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
   const open = usePanelOpen()
   const { t, locale } = useLocale()
   const { tasks, scheduler, loading, error } = useAutomations()
-  const currentSessionId = useSessions((state: SessionListState) => state.current)
-  const workspaceId = useWorkspaces((state: WorkspaceSnapshot) => {
-    if (currentSessionId === undefined) return undefined
-    const current = state.items.find((workspace: WorkspaceSnapshot['items'][number]) => workspace.sessionIds.includes(currentSessionId))
-    return current?.workspaceId
-  })
+  const sessions = useSessions((state: SessionListState) => state)
+  const currentSessionId = sessions.current
+  const refreshSessions = React.useCallback(() => ctx.sessions.refresh(), [ctx])
+  const workspaces: WorkspaceSnapshot = useWorkspaces((state: WorkspaceSnapshot) => state)
+  const workspaceId = currentSessionId === undefined ? undefined : workspaces.items.find((workspace) =>
+    workspace.sessionIds.includes(currentSessionId))?.workspaceId
 
   const [selectedId, setSelectedId] = React.useState<string>()
   const [query, setQuery] = React.useState('')
@@ -614,6 +614,9 @@ function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationPanelPro
                     key={selected.id}
                     onDirtyChange={setDirty}
                     task={selected}
+                    sessions={sessions}
+                    workspaceSessionIds={workspaces.items.find((workspace) => workspace.workspaceId === selected.execution.workspaceId)?.sessionIds.filter((id) => !workspaces.archivedSessionIds.includes(id)) ?? []}
+                    refreshSessions={refreshSessions}
                     saving={actingTaskId === selected.id}
                     t={t}
                     onSave={(body) => void updateTask(selected.id, body)}

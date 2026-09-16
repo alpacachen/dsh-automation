@@ -1,10 +1,12 @@
 import test from 'node:test'
+import { EventEmitter } from 'node:events'
 import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { DshAutomationRunner } from '../src/runner.js'
 import type { AutomationRun, AutomationTask } from '../src/types.js'
+import { unattendedAgents } from '../src/runtime-marker.js'
 
 const task: AutomationTask = {
   id: 'automation-test',
@@ -56,6 +58,7 @@ function fakeContext(
   reason: { kind: string; error?: { message: string } } = { kind: 'completed' },
   assistantText?: string,
 ) {
+  const emitter = new EventEmitter()
   const order: string[] = []
   const messages: unknown[] = []
   const createdIds: string[] = []
@@ -68,6 +71,9 @@ function fakeContext(
     async attachSession() { order.push('attach') },
   }
   const ctx = {
+    effect(install: () => () => void) { return install() },
+    on(name: string, listener: (...args: any[]) => void) { emitter.on(name, listener); return () => { emitter.off(name, listener) } },
+    get(name: string) { return (this as unknown as Record<string, unknown>)[name] },
     workspaceRegistry: {
       get: () => workspace,
       create: async () => workspace,
@@ -92,9 +98,10 @@ function fakeContext(
       async flush() { order.push('flush') },
     },
     sessionPersistence: {
-      async inspect(id: SessionId) { return { meta: { id, cwd: '/tmp/workspace' } } },
+      async stat(id: SessionId) { return { header: { id, cwd: '/tmp/workspace' } } },
     },
     agents: {
+      get() { return undefined },
       async create(options: { sessionId: string; setup?: (ctx: Context) => Promise<void> }) {
         if (!resuming) createdIds.push(options.sessionId)
         await options.setup?.({} as Context)
@@ -106,15 +113,25 @@ function fakeContext(
           events,
           snapshotEvents(fromSeq?: number) { return events.slice(fromSeq ?? 0) },
         }
-        return {
-          agent: {
+        const push = events.push.bind(events)
+        events.push = (...entries) => {
+          for (const event of entries) { push(event); emitter.emit('session/event', session, event) }
+          return events.length
+        }
+        const agent = {
             ctx: {},
             session,
             status: 'idle',
+            inbox: { nextTurn: [], nextStep: [], remove() { return false } },
+            async runMaintenance(job: (signal: AbortSignal) => Promise<unknown>) {
+              if (this.status !== 'idle') throw new Error('active work')
+              return job(new AbortController().signal)
+            },
             inject(message: unknown) { order.push('inject'); messages.push(message) },
             followup(message: unknown) {
               order.push('followup')
               messages.push(message)
+              emitter.emit('agent/inbox/claimed', { agent, message, turn: 1 })
               if (assistantText !== undefined) {
                 events.push({
                   type: 'assistant/message',
@@ -132,8 +149,10 @@ function fakeContext(
               }
               events.push({ type: 'turn/end', seq: 2, time: Date.now(), data: { turn: 1, reason } })
             },
-            async whenIdle() { order.push('idle') },
-          },
+            async whenIdle() { throw new Error('runner must not wait for whole-Agent idle') },
+          }
+        return {
+          agent,
           async dispose() { disposed += 1; order.push('dispose') },
         }
       },
@@ -144,7 +163,7 @@ function fakeContext(
       },
     },
   } as unknown as Context
-  return { ctx, order, messages, createdIds, resumedIds, disposed: () => disposed, workspace }
+  return { ctx, order, messages, createdIds, resumedIds, disposed: () => disposed, workspace, emitter }
 }
 
 test('runner keeps a completed session live for immediate sidebar visibility', async () => {
@@ -170,7 +189,15 @@ test('pinned runner resumes the exact target without creating or reinjecting ski
   assert.deepEqual(fake.resumedIds, ['target-session'])
   assert.deepEqual(fake.createdIds, [])
   assert.equal(fake.messages.filter((message) => JSON.stringify(message).includes('skill_content')).length, 0)
-  assert.equal(fake.disposed(), 1)
+  assert.equal(fake.disposed(), 0)
+})
+
+test('pinned runner rejects a missing stat snapshot without creating or resuming', async () => {
+  const fake = fakeContext()
+  fake.ctx.sessionPersistence.stat = async () => undefined
+  await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /target_session_not_found/)
+  assert.deepEqual(fake.createdIds, [])
+  assert.deepEqual(fake.resumedIds, [])
 })
 
 test('pinned runner fails without fresh fallback when resume fails', async () => {
@@ -191,22 +218,27 @@ test('pinned runner rejects busy or mismatched workspace targets', async () => {
   assert.equal(busy.disposed(), 1)
 
   const mismatch = fakeContext()
-  ;(mismatch.ctx as Context & { sessionPersistence: { inspect(id: SessionId): Promise<{ meta: { id: SessionId; cwd?: string } }> } }).sessionPersistence.inspect = async (id: SessionId) => ({ meta: { id, cwd: '/other' } })
+  const stat = mismatch.ctx.sessionPersistence.stat
+  mismatch.ctx.sessionPersistence.stat = async (id) => {
+    const snapshot = await stat(id)
+    return snapshot === undefined ? undefined : { ...snapshot, header: { ...snapshot.header, cwd: '/other' } }
+  }
   await assert.rejects(() => new DshAutomationRunner(mismatch.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), /target_workspace_mismatch/)
 })
 
-test('pinned cancellation disposes only the temporary resumed handle', async () => {
+test('pinned cancellation preserves a resumed handle that can now accept human input', async () => {
   const fake = fakeContext()
-  let releaseIdle!: () => void
-  let idleStarted!: () => void
-  const started = new Promise<void>((resolve) => { idleStarted = resolve })
-  const gate = new Promise<void>((resolve) => { releaseIdle = resolve })
+  let signalStarted!: () => void
+  const started = new Promise<void>((resolve) => { signalStarted = resolve })
   fake.ctx.agents.resume = async (options) => {
     const handle = await fake.ctx.agents.create({ sessionId: options.resumeSessionId })
-    handle.agent.whenIdle = async () => { idleStarted(); await gate }
-    handle.agent.cancel = () => {
+    handle.agent.followup = (message) => {
+      fake.emitter.emit('agent/inbox/claimed', { agent: handle.agent, message, turn: 1 })
+      signalStarted()
+    }
+    handle.agent.cancel = (_reason, options) => {
+      assert.equal(options?.keepInbox, true)
       ;((handle.agent.session as unknown as { events: Array<Record<string, unknown>> }).events).push({ type: 'turn/end', seq: 1, time: Date.now(), data: { turn: 1, reason: { kind: 'aborted' } } })
-      releaseIdle()
     }
     return handle
   }
@@ -214,9 +246,141 @@ test('pinned cancellation disposes only the temporary resumed handle', async () 
   const pending = runner.run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } })
   await started
   assert.equal(runner.cancel(run.id, 'manual'), true)
+  assert.equal((await pending).status, 'failed')
+  assert.equal(fake.disposed(), 0)
+  assert.equal(fake.emitter.eventNames().length, 0)
+})
+
+async function liveContext() {
+  const fake = fakeContext({ kind: 'completed' }, 'Only this run')
+  const handle = await fake.ctx.agents.create({ sessionId: SessionId('target-session') })
+  fake.createdIds.length = 0
+  fake.ctx.agents.get = (id) => id === handle.agent.session.header.id ? handle.agent : undefined
+  fake.ctx.agents.resume = async () => { throw new Error('duplicate write handle must not be opened') }
+  return { ...fake, agent: handle.agent }
+}
+
+test('pinned runner borrows a live idle Agent across repeat runs without disposing or renaming it', async () => {
+  const fake = await liveContext()
+  const runner = new DshAutomationRunner(fake.ctx)
+  for (const id of ['first', 'second']) {
+    const result = await runner.run(pinnedTask, { ...run, id })
+    assert.equal(result.status, 'succeeded')
+    assert.equal(result.sessionId, 'target-session')
+    assert.equal(result.summary, 'Only this run')
+    assert.equal(unattendedAgents.has(fake.agent), false)
+    assert.equal(fake.ctx.agents.get(SessionId('target-session')), fake.agent)
+  }
+  assert.equal(fake.disposed(), 0)
+  assert.deepEqual(fake.createdIds, [])
+  assert.equal(fake.messages.length, 2)
+  assert.equal(fake.order.some((entry) => entry.startsWith('title:') || entry === 'attach' || entry === 'inject'), false)
+})
+
+test('pinned runner does not touch a busy borrowed Agent or clear another run marker', async () => {
+  const fake = await liveContext()
+  Object.defineProperty(fake.agent, 'status', { value: 'running' })
+  let canceled = false
+  fake.agent.cancel = () => { canceled = true }
+  unattendedAgents.add(fake.agent)
+  try {
+    await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /target_session_busy/)
+    assert.equal(unattendedAgents.has(fake.agent), true)
+    assert.equal(fake.disposed(), 0)
+    assert.equal(fake.messages.length, 0)
+    assert.equal(canceled, false)
+    assert.equal(fake.order.some((entry) => entry.startsWith('permission:')), false)
+  } finally { unattendedAgents.delete(fake.agent) }
+})
+
+test('registry lookup occurs after persistence stat so a concurrently loaded session is borrowed', async () => {
+  const fake = await liveContext()
+  fake.ctx.agents.get = () => undefined
+  const stat = fake.ctx.sessionPersistence.stat.bind(fake.ctx.sessionPersistence)
+  fake.ctx.sessionPersistence.stat = async (id) => {
+    const value = await stat(id)
+    fake.ctx.agents.get = () => fake.agent
+    return value
+  }
+  assert.equal((await new DshAutomationRunner(fake.ctx).run(pinnedTask, run)).status, 'succeeded')
+  assert.equal(fake.disposed(), 0)
+})
+
+test('cancel during target inspection never cancels or reconfigures the borrowed user Agent', async () => {
+  const fake = await liveContext()
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const stat = fake.ctx.sessionPersistence.stat.bind(fake.ctx.sessionPersistence)
+  fake.ctx.sessionPersistence.stat = async (id) => { entered(); await gate; return stat(id) }
+  let canceled = false
+  fake.agent.cancel = () => { canceled = true }
+  const runner = new DshAutomationRunner(fake.ctx)
+  const pending = runner.run(pinnedTask, run)
+  await started
+  assert.equal(runner.cancel(run.id, 'manual'), true)
+  release()
   const result = await pending
   assert.equal(result.status, 'failed')
-  assert.equal(fake.disposed(), 1)
+  assert.equal(canceled, false)
+  assert.equal(fake.messages.length, 0)
+  assert.equal(fake.disposed(), 0)
+  assert.equal(fake.order.some((entry) => entry.startsWith('permission:')), false)
+})
+
+test('canceling an admitted borrowed turn preserves its Agent and clears unattended state', async () => {
+  const fake = await liveContext()
+  let signalStarted!: () => void
+  const started = new Promise<void>((resolve) => { signalStarted = resolve })
+  fake.agent.followup = (message) => {
+    fake.emitter.emit('agent/inbox/claimed', { agent: fake.agent, message, turn: 1 })
+    signalStarted()
+  }
+  let canceled = 0
+  fake.agent.cancel = (_cause, options) => {
+    assert.equal(options?.keepInbox, true)
+    canceled++
+    ;(fake.agent.session as unknown as { events: unknown[] }).events.push({ type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } })
+  }
+  const runner = new DshAutomationRunner(fake.ctx)
+  const pending = runner.run(pinnedTask, run)
+  await started
+  assert.equal(runner.cancel(run.id, 'timeout'), true)
+  assert.equal((await pending).status, 'failed')
+  assert.equal(canceled, 1)
+  assert.equal(fake.disposed(), 0)
+  assert.equal(unattendedAgents.has(fake.agent), false)
+  assert.equal(runner.cancel(run.id, 'manual'), false)
+})
+
+test('borrowed Agent dispatch failure clears only this run marker and never disposes the owner', async () => {
+  const fake = await liveContext()
+  fake.agent.followup = () => {
+    assert.equal(unattendedAgents.has(fake.agent), false)
+    throw new Error('dispatch failed')
+  }
+  const runner = new DshAutomationRunner(fake.ctx)
+  await assert.rejects(runner.run(pinnedTask, run), /dispatch failed/)
+  assert.equal(unattendedAgents.has(fake.agent), false)
+  assert.equal(fake.disposed(), 0)
+  assert.equal(runner.cancel(run.id, 'manual'), false)
+})
+
+test('result flush failure cannot cancel a later user turn or dispose the borrowed Agent', async () => {
+  const fake = await liveContext()
+  const runner = new DshAutomationRunner(fake.ctx)
+  let canceled = false
+  fake.agent.cancel = () => { canceled = true }
+  fake.ctx.sessions.flush = async () => {
+    assert.equal(unattendedAgents.has(fake.agent), false)
+    runner.cancel(run.id, 'timeout')
+    throw new Error('flush failed')
+  }
+  await assert.rejects(runner.run(pinnedTask, run), /flush failed/)
+  assert.equal(canceled, false)
+  assert.equal(fake.disposed(), 0)
+  assert.equal(unattendedAgents.has(fake.agent), false)
 })
 
 test('runner applies each task permission preset before execution', async () => {
@@ -356,33 +520,27 @@ test('active cancellation reaches Agent.cancel and preserves the session', async
   const fake = fakeContext()
   const agents = (fake.ctx as any).agents
   const create = agents.create.bind(agents)
-  let markIdleStarted!: () => void
-  let releaseIdle!: () => void
-  const idleStarted = new Promise<void>((resolve) => { markIdleStarted = resolve })
-  const idleGate = new Promise<void>((resolve) => { releaseIdle = resolve })
+  let signalStarted!: () => void
+  const turnStarted = new Promise<void>((resolve) => { signalStarted = resolve })
   agents.create = async (options: unknown) => {
     const handle = await create(options)
     const events = handle.agent.session.events as Array<Record<string, unknown>>
     handle.agent.followup = (message: unknown) => {
       fake.order.push('followup')
       fake.messages.push(message)
-    }
-    handle.agent.whenIdle = async () => {
-      fake.order.push('idle')
-      markIdleStarted()
-      await idleGate
+      fake.emitter.emit('agent/inbox/claimed', { agent: handle.agent, message, turn: 1 })
+      signalStarted()
     }
     handle.agent.cancel = (cause: { kind: string; reason?: string }) => {
       fake.order.push(`cancel:${cause.kind}:${cause.reason}`)
       events.push({ type: 'turn/end', seq: 1, time: Date.now(), data: { turn: 1, reason: { kind: 'aborted', reason: cause } } })
-      releaseIdle()
     }
     return handle
   }
   const runner = new DshAutomationRunner(fake.ctx)
 
   const resultPromise = runner.run(task, run)
-  await idleStarted
+  await turnStarted
   assert.equal(runner.cancel(run.id, 'timeout'), true)
   const result = await resultPromise
 

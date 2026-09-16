@@ -20,11 +20,11 @@ Run one-time or recurring tasks. Runs use a fresh visible session by default, or
 
 - 🗣️ **Create naturally** — tell an Agent what to do and when.
 - 🗓️ **Schedule precisely** — one-time instants, RFC 5545 recurrence, and IANA time zones.
-- 🧼 **Start fresh** — every run uses a new session with no previous chat history.
+- 🧼 **Start fresh by default** — each run starts a new session unless an existing session is selected.
 - 👀 **Stay informed** — see result summaries, duration, errors, history, and session links in one place.
 - 🛡️ **Limit access** — choose any permission preset advertised by the DSH Host for each task.
 - 🤖 **Choose execution** — optionally pin an Agent preset, provider/model pair, and ordered skills.
-- 📌 **Continue a conversation (MVP)** — `automation_create` may pin only the current Agent conversation to a persisted session after explicit target and creation confirmation. The target is checked by the Host persistence API; REST target changes and arbitrary session pickers are unsupported. Pinned runs resume exactly, never create a replacement, and show an **Open conversation** link when available.
+- 📌 **Manually select an existing Session** — bind a task to a conversation in the same workspace so future runs continue there instead of creating new sessions.
 - 🧭 **Start with guidance** — use outcome-focused templates or a guided creation conversation.
 - 🎛️ **Stay in control** — edit, run, pause, resume, or delete tasks from the UI.
 
@@ -51,6 +51,29 @@ Or:
 After creation, open **Automations** in the sidebar to manage the task.
 
 Use **New automation** at any time for a guided setup, or choose a result-focused template in the empty state. Before creation, the Agent previews the name, schedule and time zone, workspace, Agent preset, provider/model, selected skills, exact Host permission, notifications, and failure-pause policy, then waits for confirmation.
+
+## 📌 Manually select an existing Session
+
+Tasks create fresh sessions by default. To retain one conversation across runs, or write results into a session already bound to dsh-im, change the destination after creating the task:
+
+1. Open **Automations → select a task → Edit → Execution destination**.
+2. Change **Session mode** to **Use an existing session**.
+3. Search by title or Session ID and choose the destination.
+4. Confirm the target change and save. Future runs append their task and reply to this Session.
+
+Candidates are persisted, non-archived ordinary sessions in **the task's workspace**, including user-created forks but excluding subagents. Queued or running tasks cannot change destinations. When the task is idle, you can also switch back to fresh sessions. Creation behavior is unchanged; changing the destination afterward is manual-only and is not exposed through the Agent's `automation_update` tool.
+
+Pinned runs retain the session's context and Agent/model configuration without reinjecting selected skills. The task's permission preset is applied to that session. Busy, maintenance-locked, or unavailable targets fail the run without creating a replacement. Automation tracks only its own turn, and cancellation preserves queued human follow-ups.
+
+### 📱 Pair with dsh-im
+
+One use for an existing Session is pairing with [dsh-im](https://github.com/xmanrui/dsh-im) to deliver water reminders, daily briefings, and other scheduled results to your phone:
+
+- Enable **session two-way sync** on the corresponding dsh-im private-chat target (off by default).
+- Select **the same Session currently bound to the IM chat** as the automation destination, and keep DSH and the bot connection running.
+- Use **Run now** once to verify phone delivery; recheck the task binding after switching IM sessions.
+
+> Compatibility: dsh-im must also support Automation-origin plugin turns. Versions that mirror only user-origin turns skip these replies even with two-way sync enabled. See the [dsh-im guide](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.en.md) for configuration details.
 
 ## 🎛️ Manage and edit
 
@@ -96,7 +119,7 @@ Schedule due → Global queue → Fresh or pinned persisted session → Agent ru
 - DSH must be running when work is due; after restart, only the latest missed occurrence runs.
 - Transient scheduler failures retry automatically with bounded exponential backoff.
 - Paused occurrences are skipped; **Resume & run** does not move the original schedule.
-- Selected skill names load their current definitions before every run. A removed/broken preset, model, skill, or permission fails the run instead of falling back.
+- Fresh-session runs load the current definitions of selected skills; pinned-session runs keep the target's existing configuration without reinjecting them. Required execution settings that are unavailable fail the run instead of falling back.
 - Permission presets with `approval: ask` remain interactive: unattended runs never auto-approve and may wait until the run timeout.
 - Existing state stays at version 1. Older tasks are normalized in memory without a startup rewrite and retain their saved execution and permission settings.
 
