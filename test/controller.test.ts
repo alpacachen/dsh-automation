@@ -46,6 +46,33 @@ test('controller delegates mutations and requests scheduler recomputation', asyn
   ])
 })
 
+test('delivery validates changed destinations but offline discovery does not block unrelated edits or clearing', async () => {
+  const current = { execution: { workspaceId: 'w', cwd: '/w', skills: [] }, security: { permissionPreset: 'read-only' }, delivery: { botId: 'bot', targetId: 'phone' } }
+  const domain = {
+    update: async (_id: string, _request: unknown, _now: number, beforeCommit?: (task: typeof current) => Promise<void>) => {
+      await beforeCommit?.(current)
+      return current
+    },
+  } as unknown as AutomationDomain
+  const scheduler = { requestDrive() {} } as unknown as AutomationScheduler
+  const unavailable = new AutomationController(domain, scheduler)
+  assert.deepEqual(await unavailable.deliveryOptions(), { available: false, bots: [], targets: [] })
+  await unavailable.update('task', { name: 'Rename' })
+  await unavailable.update('task', { delivery: null })
+  await unavailable.update('task', { delivery: current.delivery })
+  await assert.rejects(unavailable.update('task', { delivery: { botId: 'other', targetId: 'phone' }, deliveryChangeConfirmed: true }), /unavailable/)
+  let validations = 0
+  const controller = new AutomationController(domain, scheduler, undefined, undefined, undefined, {
+    options: async (botId) => ({ available: true, bots: [{ botId: botId ?? 'bot', channel: 'test' }], targets: [] }),
+    validate: async () => { validations++; throw new Error('Target is not saved') },
+  })
+  assert.equal((await controller.deliveryOptions('other')).bots[0]?.botId, 'other')
+  await controller.update('task', { delivery: current.delivery })
+  assert.equal(validations, 0)
+  await assert.rejects(controller.update('task', { delivery: { botId: 'bot', targetId: 'missing' }, deliveryChangeConfirmed: true }), /not saved/)
+  assert.equal(validations, 1)
+})
+
 test('controller does not wake scheduler for idempotent delete miss', async () => {
   let drives = 0
   const domain = { delete: async () => false } as unknown as AutomationDomain

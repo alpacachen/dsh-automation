@@ -56,15 +56,11 @@ Use **New automation** at any time for a guided setup, or choose a result-focuse
 
 Runs create fresh sessions by default. In **Edit → Execution destination**, you can manually select and confirm an existing Session in the same workspace. Future runs retain its context and Agent/model configuration while applying the task's permissions. Agents cannot change this setting; a busy or unavailable target fails without creating a replacement.
 
-### 📱 Pair with dsh-im
+## 📱 Message delivery (optional)
 
-One use for an existing Session is pairing with [dsh-im](https://github.com/xmanrui/dsh-im) to deliver water reminders, daily briefings, and other scheduled results to your phone:
+In **Edit → Message delivery**, choose a [dsh-im](https://github.com/xmanrui/dsh-im) bot on the same Host and a saved target, then confirm to send task replies or failure reports directly—useful for reminders and daily briefings. **No pinned Session or two-way sync is required**; ordinary tasks work without dsh-im installed. See the [dsh-im guide](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.en.md) to configure targets.
 
-- Enable **session two-way sync** on the corresponding dsh-im private-chat target (off by default).
-- Select **the same Session currently bound to the IM chat** as the automation destination, and keep DSH and the bot connection running.
-- Use **Run now** once to verify phone delivery; recheck the task binding after switching IM sessions.
-
-> Compatibility: dsh-im must also support Automation-origin plugin turns. Versions that mirror only user-origin turns skip these replies even with two-way sync enabled. See the [dsh-im guide](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.en.md) for configuration details.
+Delivery status is recorded separately from task results. Failed sends never rerun the task or automatically resend; an in-flight send interrupted by restart becomes unknown. Runs canceled manually or interrupted by Host shutdown do not trigger reports. “Platform accepted” does not guarantee phone receipt; keep the bot online and test delivery yourself.
 
 ## 🎛️ Manage and edit
 

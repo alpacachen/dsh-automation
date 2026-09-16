@@ -100,6 +100,13 @@ function fakeContext(
     sessionPersistence: {
       async stat(id: SessionId) { return { header: { id, cwd: '/tmp/workspace' } } },
     },
+    sessionController: {
+      async resolveAgent(id: SessionId) {
+        order.push('resolve-session')
+        const handle = await ctx.agents.resume({ resumeSessionId: id })
+        return { agent: handle.agent }
+      },
+    },
     agents: {
       get() { return undefined },
       async create(options: { sessionId: string; setup?: (ctx: Context) => Promise<void> }) {
@@ -192,6 +199,26 @@ test('pinned runner resumes the exact target without creating or reinjecting ski
   assert.equal(fake.disposed(), 0)
 })
 
+test('cold pinned Sessions use the Host restore pipeline instead of bare Agent resume', async () => {
+  const fake = fakeContext()
+  const restored = await fake.ctx.agents.resume({ resumeSessionId: SessionId('target-session') })
+  fake.resumedIds.length = 0
+  fake.ctx.agents.resume = async () => { throw new Error('Bare resume omits model and preset restoration') }
+  const resolved: string[] = []
+  fake.ctx.sessionController.resolveAgent = async (id) => { resolved.push(id); return { agent: restored.agent } }
+  const result = await new DshAutomationRunner(fake.ctx).run(pinnedTask, run)
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(resolved, ['target-session'])
+  assert.deepEqual(fake.resumedIds, [])
+  assert.equal(fake.disposed(), 0)
+
+  fake.ctx.sessionController.resolveAgent = async () => ({ error: { message: 'Cannot restore saved model' } } as any)
+  await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /target_resume_failed: Cannot restore saved model/)
+  Object.defineProperty(fake.ctx, 'sessionController', { value: undefined })
+  await assert.rejects(new DshAutomationRunner(fake.ctx).run(pinnedTask, run), /Host session controller is unavailable/)
+  assert.deepEqual(fake.createdIds, [])
+})
+
 test('pinned runner rejects a missing stat snapshot without creating or resuming', async () => {
   const fake = fakeContext()
   fake.ctx.sessionPersistence.stat = async () => undefined
@@ -215,7 +242,7 @@ test('pinned runner rejects busy or mismatched workspace targets', async () => {
     return handle
   }
   await assert.rejects(() => new DshAutomationRunner(busy.ctx).run(pinnedTask, { ...run, sessionId: 'target-session', executionTarget: { mode: 'pinned-session', sessionId: 'target-session' } }), /target_session_busy/)
-  assert.equal(busy.disposed(), 1)
+  assert.equal(busy.disposed(), 0, 'The Session controller owns the restored shared Agent')
 
   const mismatch = fakeContext()
   const stat = mismatch.ctx.sessionPersistence.stat
@@ -471,6 +498,7 @@ test('runner stores a bounded summary from the final assistant message', async (
   assert.match(result.summary ?? '', /^Finished x+/)
   assert.equal([...(result.summary ?? '')].length, 500)
   assert.ok(result.summary?.endsWith('…'))
+  assert.equal(result.output, `Finished\n\n${'x'.repeat(600)}`, 'Delivery receives the complete final text, not the sidebar summary')
 })
 
 test('non-completed turn is reported as failed while preserving its session id', async () => {

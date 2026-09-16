@@ -6,6 +6,8 @@ import { AutomationDomainError, type AutomationDomain } from './domain.js'
 import type { AutomationScheduler } from './scheduler.js'
 import type { AgentConfiguration } from './agent-configuration.js'
 import type {
+  AutomationDelivery,
+  AutomationDeliveryOptions,
   AutomationRun,
   AutomationSchedulerHealth,
   AutomationTask,
@@ -39,7 +41,15 @@ export class AutomationController {
     private readonly now: () => number = () => Date.now(),
     private readonly agentConfiguration?: AgentConfiguration,
     private readonly validateSessionTarget?: (task: AutomationTask, sessionId: string) => Promise<void>,
+    private readonly delivery?: {
+      options(botId?: string): Promise<AutomationDeliveryOptions>
+      validate(destination: AutomationDelivery): Promise<void>
+    },
   ) {}
+
+  async deliveryOptions(botId?: string): Promise<AutomationDeliveryOptions> {
+    return this.delivery?.options(botId) ?? { available: false, bots: [], targets: [] }
+  }
 
   list(): AutomationTaskView[] {
     return this.domain.list().map((task) => {
@@ -66,6 +76,10 @@ export class AutomationController {
   async update(id: string, request: UpdateAutomationRequest): Promise<AutomationTask> {
     const agentConfiguration = this.agentConfiguration
     const beforeCommit = async (current: AutomationTask) => {
+      if (request.delivery != null && (request.delivery.botId !== current.delivery?.botId || request.delivery.targetId !== current.delivery?.targetId)) {
+        if (this.delivery === undefined) throw new Error('dsh-im direct delivery is unavailable on this Host.')
+        await this.delivery.validate(request.delivery)
+      }
       if (request.execution?.target?.mode === 'pinned-session') {
         if (this.validateSessionTarget === undefined) throw new Error('target_session_unavailable: persisted session validation is unavailable.')
         await this.validateSessionTarget(current, request.execution.target.sessionId)

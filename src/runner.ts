@@ -15,16 +15,16 @@ import '@deepseek-ai/dsh-permission-presets'
 import '@deepseek-ai/dsh-session-title'
 import '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import type {} from '@deepseek-ai/dsh-api-session-controller'
 
 const RUN_SUMMARY_MAX_CHARS = 500
 
-function assistantSummary(event: SessionEvent<'assistant/message'>): string | undefined {
-  const summary = event.data.message.content
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .replace(/\s+/g, ' ')
-    .trim()
+function assistantText(event: SessionEvent<'assistant/message'>): string {
+  return event.data.message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n').trim()
+}
+
+function assistantSummary(text: string): string | undefined {
+  const summary = text.replace(/\s+/g, ' ').trim()
   if (!summary) return undefined
   const characters = [...summary]
   return characters.length <= RUN_SUMMARY_MAX_CHARS
@@ -96,6 +96,7 @@ export class DshAutomationRunner implements AutomationRunner {
     })
     let turn: number | undefined
     let summary: string | undefined
+    let output: string | undefined
     let settled = false
     let marked = false
     const disposers: Array<() => void> = []
@@ -113,7 +114,8 @@ export class DshAutomationRunner implements AutomationRunner {
       // before the Promise continuation below gets a chance to run.
       cleanup()
       resolveCompletion({ status, sessionId: agent.session.header.id,
-        ...(summary === undefined ? {} : { summary }), ...(error === undefined ? {} : { error }) })
+        ...(summary === undefined ? {} : { summary }), ...(output === undefined ? {} : { output }),
+        ...(error === undefined ? {} : { error }) })
     }
     try {
       disposers.push(this.ctx.on('agent/inbox/claimed', (event) => {
@@ -133,7 +135,10 @@ export class DshAutomationRunner implements AutomationRunner {
       }))
       disposers.push(this.ctx.on('session/event', (session, event) => {
         if (session !== agent.session || turn === undefined) return
-        if (event.type === 'assistant/message' && event.data.turn === turn) summary = assistantSummary(event)
+        if (event.type === 'assistant/message' && event.data.turn === turn) {
+          output = assistantText(event) || undefined
+          summary = assistantSummary(output ?? '')
+        }
         if (event.type === 'turn/end' && event.data.turn === turn) {
           const reason = event.data.reason
           finish(reason.kind === 'completed' ? 'succeeded' : 'failed', reason.kind === 'completed' ? undefined
@@ -221,8 +226,13 @@ export class DshAutomationRunner implements AutomationRunner {
         if (snapshot.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match.')
         agent = this.ctx.agents.get(sessionId)
         if (agent === undefined && active.cancelReason === undefined) {
-          handle = await this.ctx.agents.resume({ resumeSessionId: sessionId })
-          agent = handle.agent
+          // Bare agents.resume does not restore the Session's preset or model
+          // selection. Let the same owner used by Web restore and retain it.
+          const controller = this.ctx.get('sessionController')
+          if (controller === undefined) throw new Error('target_session_unavailable: Host session controller is unavailable.')
+          const resolved = await controller.resolveAgent(sessionId)
+          if ('error' in resolved) throw new Error(`target_resume_failed: ${resolved.error.message}`)
+          agent = resolved.agent
         }
       } else {
         handle = await this.ctx.agents.create({

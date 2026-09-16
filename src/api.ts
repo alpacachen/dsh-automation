@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from './controller.js'
-import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
+import { AutomationDeliverySchema, AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
 
@@ -45,7 +45,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 function parseUpdate(body: Record<string, unknown>, current: AutomationTask): UpdateAutomationRequest {
-  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution', 'confirmSessionTargetChange'].includes(key))) {
+  if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution', 'confirmSessionTargetChange', 'delivery', 'confirmDeliveryChange'].includes(key))) {
     throw new Error('Update body contains an unknown field.')
   }
   if (body.name !== undefined && typeof body.name !== 'string') throw new Error('name must be a string.')
@@ -53,6 +53,8 @@ function parseUpdate(body: Record<string, unknown>, current: AutomationTask): Up
   if (body.pauseAfterConsecutiveFailures !== undefined && typeof body.pauseAfterConsecutiveFailures !== 'boolean') {
     throw new Error('pauseAfterConsecutiveFailures must be boolean.')
   }
+  const delivery = body.delivery === undefined || body.delivery === null ? body.delivery : AutomationDeliverySchema.parse(body.delivery)
+  if (body.confirmDeliveryChange !== undefined && typeof body.confirmDeliveryChange !== 'boolean') throw new Error('confirmDeliveryChange must be boolean.')
   const schedule = body.schedule === undefined ? undefined : AutomationScheduleSchema.parse(body.schedule)
   const notificationPolicy = body.notificationPolicy === undefined ? undefined : NotificationPolicySchema.parse(body.notificationPolicy)
   const permissionPreset = body.permissionPreset === undefined ? undefined : AutomationPermissionPresetSchema.parse(body.permissionPreset)
@@ -64,6 +66,8 @@ function parseUpdate(body: Record<string, unknown>, current: AutomationTask): Up
     throw new Error('confirmSessionTargetChange must be boolean.')
   }
   return {
+    ...(delivery === undefined ? {} : { delivery }),
+    ...(body.confirmDeliveryChange === true ? { deliveryChangeConfirmed: true as const } : {}),
     ...(body.name === undefined ? {} : { name: body.name as string }),
     ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
     ...(schedule === undefined ? {} : { schedule }),
@@ -141,6 +145,12 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
         }
         if (req.method === 'GET' && (suffix === '' || suffix === '/tasks')) {
           send(res, 200, { tasks: controller.list(), scheduler: controller.schedulerHealth() })
+          return
+        }
+        if (req.method === 'GET' && suffix === '/delivery-options') {
+          const botId = url.searchParams.get('botId') ?? undefined
+          if (botId !== undefined && (!botId.trim() || botId.length > 256)) throw new Error('Invalid dsh-im bot id.')
+          send(res, 200, { options: await controller.deliveryOptions(botId) })
           return
         }
         const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop|options))?$/.exec(suffix)

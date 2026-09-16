@@ -93,6 +93,11 @@ export function permissionLabel(preset: string, t: typeof translate, displayName
   return preset
 }
 
+function deliveryStatusLabel(status: NonNullable<AutomationTaskView['runs'][number]['delivery']>['status'], t: typeof translate): string {
+  const keys = { sending: 'deliverySending', sent: 'deliverySent', failed: 'deliveryFailed', unknown: 'deliveryUnknown' } as const
+  return t(keys[status])
+}
+
 /** Statuses whose run row offers a retry. */
 const RETRYABLE = ['failed', 'timed_out', 'interrupted', 'outcome_unknown']
 
@@ -125,12 +130,16 @@ function RunRow({ run, locale, t, disabled, onRetry, onOpen }: {
           {duration !== undefined && <><span aria-hidden="true">·</span><span>{duration}</span></>}
           <span aria-hidden="true">·</span>
           <time dateTime={run.startedAt ?? run.enqueuedAt}>{formatDate(run.startedAt ?? run.enqueuedAt, locale)}</time>
+          {run.delivery !== undefined && <span className={run.delivery.status === 'failed' ? 'am-status am-danger' : 'am-status'}>
+            {t('messageDelivery')} · {deliveryStatusLabel(run.delivery.status, t)}
+          </span>}
         </span>
       }
     >
       <div className="am-run-body">
         {run.summary !== undefined && <p className="am-run-summary">{run.summary}</p>}
         {run.error !== undefined && <p className="am-alert is-error">{run.error}</p>}
+        {run.delivery?.error !== undefined && <p className="am-alert is-error">{t('deliveryError', { error: run.delivery.error })}</p>}
         <dl className="am-run-facts">
           <dt>{t('trigger')}</dt><dd>{triggerLabel(run.trigger, t)}</dd>
           {run.scheduledAt !== undefined && <><dt>{t('schedule')}</dt><dd>{formatDate(run.scheduledAt, locale)}</dd></>}
@@ -154,6 +163,13 @@ function RunRow({ run, locale, t, disabled, onRetry, onOpen }: {
               <dd className="am-mono-row"><code>{run.sessionId}</code><CopyButton value={run.sessionId} t={t} /></dd>
             </>
           )}
+          {run.delivery !== undefined && <>
+            <dt>{t('messageDelivery')}</dt><dd>{deliveryStatusLabel(run.delivery.status, t)}</dd>
+            <dt>{t('deliveryBot')}</dt><dd><code>{run.delivery.botId}</code></dd>
+            <dt>{t('deliveryTarget')}</dt><dd><code>{run.delivery.targetId}</code></dd>
+            <dt>{t('deliveryAttemptedAt')}</dt><dd>{formatDate(run.delivery.attemptedAt, locale)}</dd>
+            {run.delivery.finishedAt !== undefined && <><dt>{t('deliveryFinishedAt')}</dt><dd>{formatDate(run.delivery.finishedAt, locale)}</dd></>}
+          </>}
           <dt>{t('runId')}</dt>
           <dd className="am-mono-row"><code>{run.id}</code><CopyButton value={run.id} t={t} /></dd>
         </dl>
@@ -356,6 +372,9 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
             </Fact>
             <Fact icon={<IconAgentPresetOutline16 />} label={t('agentExecution')} full>
               {executionLabel(task, t)}
+            </Fact>
+            <Fact icon={<IconRightUpOutline16 />} label={t('messageDelivery')} full>
+              {task.delivery === undefined ? t('disabled') : <code>{task.delivery.botId} / {task.delivery.targetId}</code>}
             </Fact>
             <Fact icon={<IconBell />} label={t('notifications')}>{notificationPolicyLabel(task.notificationPolicy, t)}</Fact>
             <Fact icon={<IconPauseOutline16 />} label={t('pauseAfterFailures')}>

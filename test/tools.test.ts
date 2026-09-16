@@ -195,5 +195,11 @@ test('pinned create requires durable target confirmation and update rejects targ
     assert.equal(update.ok, false)
     assert.match(update.error, /target changes are unsupported/)
   }
+  for (const key of ['delivery', 'confirmDeliveryChange', 'deliveryChangeConfirmed']) {
+    assert.equal(Object.hasOwn(definition.parameters, key), false)
+    const update = await definition.execute({ id: 'automation-task', name: 'Changed', [key]: true }, fixture.exec)
+    assert.equal(update.ok, false)
+    assert.match(update.error, /Message delivery changes are manual-only/)
+  }
   assert.equal(fixture.calls.some((call) => call.startsWith('update:')), false)
 })

@@ -1,10 +1,13 @@
-import type { AutomationTask, AutomationRun, AutomationSchedulerHealth } from './types.js'
+import type { AutomationTask, AutomationRun, AutomationRunDelivery, AutomationSchedulerHealth } from './types.js'
 import { AutomationDomain, type RunOutcome } from './domain.js'
 
 export const MAX_TIMER_DELAY_MS = 2_147_483_647
 export const RETRY_BASE_DELAY_MS = 1_000
 export const RETRY_MAX_DELAY_MS = 60_000
 export const DEFAULT_MAX_RUN_DURATION_MS = 60 * 60_000
+export const DELIVERY_TIMEOUT_MS = 15_000
+
+export type AutomationDeliverySender = (task: AutomationTask, run: AutomationRun, outcome: RunOutcome, signal: AbortSignal) => Promise<void>
 
 export type AutomationRunCancelReason = 'manual' | 'timeout' | 'shutdown'
 
@@ -17,6 +20,7 @@ export interface AutomationRunnerResult {
   readonly status: 'succeeded' | 'failed'
   readonly sessionId: string
   readonly summary?: string
+  readonly output?: string
   readonly error?: string
 }
 
@@ -40,7 +44,14 @@ export class AutomationScheduler {
   private stopped = false
   private driving: Promise<void> | undefined
   private healthState: AutomationSchedulerHealth = { status: 'healthy', consecutiveFailures: 0 }
-  private pendingFinish: { taskId: string; runId: string; outcome: RunOutcome } | undefined
+  private pendingFinish: {
+    task: AutomationTask
+    run: AutomationRun
+    outcome: RunOutcome
+    executionSaved: boolean
+    deliveryResult?: AutomationRunDelivery
+  } | undefined
+  private activeDelivery: AbortController | undefined
   private activeRun: {
     taskId: string
     runId: string
@@ -54,6 +65,7 @@ export class AutomationScheduler {
     readonly clock: Clock = systemClock,
     private readonly onError: (error: unknown) => void = (error) => console.error(error),
     readonly maxRunDurationMs = DEFAULT_MAX_RUN_DURATION_MS,
+    private readonly sender?: AutomationDeliverySender,
   ) {}
 
   start(): void {
@@ -99,6 +111,7 @@ export class AutomationScheduler {
     this.requested = false
     this.clearTimer()
     this.cancelActiveRun('shutdown')
+    this.activeDelivery?.abort(new Error('DSH stopped before message delivery settled; delivery may have completed.'))
     const { retryAt: _retryAt, ...health } = this.healthState
     this.healthState = { ...health, status: 'stopped' }
     await this.driving
@@ -165,8 +178,65 @@ export class AutomationScheduler {
   private async finishPendingRun(now: number): Promise<void> {
     const pending = this.pendingFinish
     if (pending === undefined) return
-    await this.domain.finishRun(pending.taskId, pending.runId, pending.outcome, now)
+    if (!pending.executionSaved) {
+      // Record execution and send intent together before any external side effect.
+      await this.domain.finishRun(pending.task.id, pending.run.id, pending.outcome, now, pending.task.delivery)
+      pending.executionSaved = true
+    }
+    if (pending.deliveryResult === undefined) {
+      // The task/history may have been removed while persistence was retried.
+      const savedRun = this.domain.store.snapshot().tasks[pending.task.id]?.runs.find((run) => run.id === pending.run.id)
+      if (savedRun?.delivery?.status === 'sending'
+        && ['succeeded', 'failed', 'timed_out'].includes(savedRun.status)
+        && savedRun.delivery.botId === pending.task.delivery?.botId
+        && savedRun.delivery.targetId === pending.task.delivery?.targetId) {
+        pending.deliveryResult = await this.sendDelivery(pending.task, savedRun, pending.outcome)
+      }
+    }
+    if (pending.deliveryResult !== undefined) {
+      // Retrying this write must never call the sender (or the Agent) again.
+      await this.domain.finishDelivery(pending.task.id, pending.run.id, pending.deliveryResult)
+    }
     if (this.pendingFinish === pending) this.pendingFinish = undefined
+  }
+
+  private async sendDelivery(task: AutomationTask, run: AutomationRun, outcome: RunOutcome): Promise<AutomationRunDelivery> {
+    const delivery = run.delivery!
+    const controller = new AbortController()
+    this.activeDelivery = controller
+    let cancelTimeout: (() => void) | undefined
+    let onAbort: (() => void) | undefined
+    let status: AutomationRunDelivery['status'] = 'sent'
+    let error: string | undefined
+    try {
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(controller.signal.reason)
+        controller.signal.addEventListener('abort', onAbort, { once: true })
+      })
+      cancelTimeout = this.clock.setTimeout(() => {
+        controller.abort(new Error('Message delivery timed out; it may have completed and will not be resent automatically.'))
+      }, DELIVERY_TIMEOUT_MS)
+      if (this.stopped) controller.abort(new Error('DSH stopped before message delivery started.'))
+      await Promise.race([
+        aborted,
+        Promise.resolve().then(() => {
+          controller.signal.throwIfAborted()
+          const saved = this.domain.store.snapshot().tasks[task.id]?.runs.find((entry) => entry.id === run.id)?.delivery
+          if (saved?.status !== 'sending' || saved.botId !== delivery.botId || saved.targetId !== delivery.targetId || saved.attemptedAt !== delivery.attemptedAt) return
+          if (this.sender === undefined) throw new Error('Message delivery service is unavailable.')
+          return this.sender(task, run, outcome, controller.signal)
+        }),
+      ])
+    } catch (cause) {
+      status = controller.signal.aborted ? 'unknown' : 'failed'
+      error = cause instanceof Error ? cause.message : String(cause)
+      if (!error) error = 'Message delivery failed.'
+    } finally {
+      cancelTimeout?.()
+      if (onAbort !== undefined) controller.signal.removeEventListener('abort', onAbort)
+      if (this.activeDelivery === controller) this.activeDelivery = undefined
+    }
+    return { ...delivery, status, finishedAt: new Date(this.clock.now()).toISOString(), ...(error === undefined ? {} : { error }) }
   }
 
   private async drive(): Promise<void> {
@@ -199,6 +269,7 @@ export class AutomationScheduler {
             status: result.status,
             sessionId: result.sessionId,
             ...(result.summary === undefined ? {} : { summary: result.summary }),
+            ...(result.output === undefined ? {} : { output: result.output }),
             ...(result.error === undefined ? {} : { error: result.error }),
           }
         } catch (error) {
@@ -213,6 +284,7 @@ export class AutomationScheduler {
         const resultData = {
           ...(outcome.sessionId === undefined ? {} : { sessionId: outcome.sessionId }),
           ...(outcome.summary === undefined ? {} : { summary: outcome.summary }),
+          ...(outcome.output === undefined ? {} : { output: outcome.output }),
         }
         if (active.cancelReason === 'timeout') {
           outcome = { status: 'timed_out', error: `Automation exceeded its ${this.maxRunDurationMs}ms run limit.`, ...resultData }
@@ -222,7 +294,7 @@ export class AutomationScheduler {
           outcome = { status: 'interrupted', error: 'DSH stopped while this automation run was active.', ...resultData }
         }
         if (this.activeRun === active) this.activeRun = undefined
-        this.pendingFinish = { taskId: claimed.task.id, runId: claimed.run.id, outcome }
+        this.pendingFinish = { task: claimed.task, run: claimed.run, outcome, executionSaved: false }
         await this.finishPendingRun(this.clock.now())
         this.requested = true
         continue

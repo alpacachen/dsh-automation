@@ -5,11 +5,12 @@ import {
   Pill,
   Switch,
   Tag,
+  Tooltip,
   IconCloseOutline16,
   IconSearchOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationTaskView } from '../types.js'
+import type { AgentConfigurationOptions, AutomationDelivery, AutomationDeliveryOptions, AutomationExecutionPatch, AutomationTaskView } from '../types.js'
 import { t as translate } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
 import { Select, type SelectOption } from './shared.js'
@@ -20,6 +21,8 @@ export type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' 
   permissionPreset?: AutomationTaskView['security']['permissionPreset']
   confirmPermissionChange?: true
   confirmSessionTargetChange?: true
+  delivery?: AutomationDelivery | null
+  confirmDeliveryChange?: true
   execution?: Omit<AutomationExecutionPatch, 'target' | 'sessionTargetConfirmed'> & {
     target?: { mode: 'fresh' } | { mode: 'pinned-session'; sessionId: string }
   }
@@ -75,7 +78,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /** Advanced settings stay available without crowding the primary editing flow. */
-function Disclosure({ title, children }: { title: string; children: React.ReactNode }) {
+function Disclosure({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {
   return (
     <details className="am-editor-disclosure">
       <summary className="am-form-section-title">{title}</summary>
@@ -191,7 +194,6 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   const initialTarget = task.execution.target
   const [targetMode, setTargetMode] = React.useState(initialTarget?.mode ?? 'fresh')
   const [targetSessionId, setTargetSessionId] = React.useState(initialTarget?.mode === 'pinned-session' ? initialTarget.sessionId : '')
-  const [targetConfirmed, setTargetConfirmed] = React.useState(false)
   const [sessionQuery, setSessionQuery] = React.useState('')
   const [sessionsLoading, setSessionsLoading] = React.useState(true)
   const [sessionsError, setSessionsError] = React.useState<string>()
@@ -217,7 +219,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   const candidates = sessions.ids.map((id) => sessions.byId[id]!).filter((session) =>
     session !== undefined && workspaceSessionIds.includes(session.id) && session.cwd === task.execution.cwd && session.origin !== 'subagent')
   const selectedSession = candidates.find((session) => session.id === targetSessionId)
-  const targetValid = !targetChanged || (!targetLocked && targetConfirmed && (!pinned ||
+  const targetValid = !targetChanged || (!targetLocked && (!pinned ||
     (!sessionsLoading && sessionLoadError === undefined && sessions.phase === 'ready' && selectedSession !== undefined)))
   const needle = sessionQuery.trim().toLowerCase()
   const sessionOptions: SelectOption[] = [
@@ -230,6 +232,49 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
       label: `${session.displayTitle}${session.id === sessions.current ? ` · ${t('currentSession')}` : ''}${session.running ? ` · ${t('statusRunning')}` : ''}`,
       hint: `${session.id} · ${new Date(session.updatedAt).toLocaleString()}`,
     })),
+  ]
+  const [deliveryEnabled, setDeliveryEnabled] = React.useState(task.delivery !== undefined)
+  const [deliveryBotId, setDeliveryBotId] = React.useState(task.delivery?.botId ?? '')
+  const [deliveryTargetId, setDeliveryTargetId] = React.useState(task.delivery?.targetId ?? '')
+  const [deliveryCatalog, setDeliveryCatalog] = React.useState<{ botId: string; options: AutomationDeliveryOptions }>()
+  const [deliveryLoading, setDeliveryLoading] = React.useState(false)
+  const [deliveryError, setDeliveryError] = React.useState<string>()
+  const [deliveryRefresh, setDeliveryRefresh] = React.useState(0)
+  React.useEffect(() => {
+    if (!deliveryEnabled) return
+    const controller = new AbortController()
+    setDeliveryLoading(true)
+    setDeliveryError(undefined)
+    const query = deliveryBotId === '' ? '' : `?botId=${encodeURIComponent(deliveryBotId)}`
+    void request(`/delivery-options${query}`, { signal: controller.signal }).then((value) => {
+      if (!controller.signal.aborted) setDeliveryCatalog({ botId: deliveryBotId, options: (value as { options: AutomationDeliveryOptions }).options })
+    }, (error: unknown) => {
+      if (!controller.signal.aborted) setDeliveryError(error instanceof Error ? error.message : String(error))
+    }).finally(() => { if (!controller.signal.aborted) setDeliveryLoading(false) })
+    return () => controller.abort()
+  }, [deliveryEnabled, deliveryBotId, deliveryRefresh])
+  const deliveryOptions = deliveryCatalog?.options
+  // A previous bot's catalog must never validate or label the new target.
+  const deliveryTargets = deliveryCatalog?.botId === deliveryBotId ? deliveryOptions?.targets ?? [] : []
+  const selectedDeliveryBot = deliveryOptions?.bots.find((entry) => entry.botId === deliveryBotId)
+  const selectedDeliveryTarget = deliveryTargets.find((entry) => entry.targetId === deliveryTargetId)
+  const deliveryChanged = deliveryEnabled !== (task.delivery !== undefined) || (deliveryEnabled &&
+    (deliveryBotId !== task.delivery?.botId || deliveryTargetId !== task.delivery?.targetId))
+  const deliveryValid = !deliveryChanged || (!targetLocked && (!deliveryEnabled ||
+    (!deliveryLoading && deliveryError === undefined && deliveryOptions?.available === true &&
+      selectedDeliveryBot !== undefined && selectedDeliveryTarget !== undefined)))
+  const deliveryBotOptions: SelectOption[] = [
+    { value: '', label: t('selectDeliveryBot'), disabled: true },
+    ...(deliveryBotId !== '' && selectedDeliveryBot === undefined
+      ? [{ value: deliveryBotId, label: `${deliveryBotId} · ${t('unavailable')}`, disabled: true }] : []),
+    ...(deliveryOptions?.bots ?? []).map((entry) => ({ value: entry.botId, label: `${entry.channel} · ${entry.botId}` })),
+  ]
+  const deliveryTargetOptions: SelectOption[] = [
+    { value: '', label: t('selectDeliveryTarget'), disabled: true },
+    ...(deliveryTargetId !== '' && selectedDeliveryTarget === undefined
+      ? [{ value: deliveryTargetId, label: `${deliveryTargetId} · ${t('unavailable')}`, disabled: true }] : []),
+    ...deliveryTargets.map((entry) => ({ value: entry.targetId,
+      label: entry.name ? `${entry.name} · ${entry.targetId}` : entry.targetId, hint: entry.kind })),
   ]
   const [name, setName] = React.useState(task.name)
   const [prompt, setPrompt] = React.useState(task.prompt)
@@ -272,7 +317,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
     skills.join('\0') !== task.execution.skills.join('\0'))
   const executionChanged = targetChanged || agentExecutionChanged
   const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged || permissionChanged ||
-    executionChanged || notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
+    executionChanged || deliveryChanged || notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
   const selectedPermission = options?.permissions.find((entry) => entry.id === permissionPreset)
   const selectedProvider = options?.models.find((entry) => entry.provider === provider)
   const selectedPresetAvailable = agentPreset === '' || options?.presets.some((entry) => entry.id === agentPreset && entry.broken === undefined)
@@ -283,7 +328,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   const requiredFieldsValid = name.trim() !== '' && prompt.trim() !== '' && (kind === 'once'
     ? onceAt.trim() !== '' && Number.isFinite(new Date(onceAt).getTime())
     : effectiveRrule.trim() !== '' && timeZone.trim() !== '' && startAt.trim() !== '')
-  const blocked = saving || optionsLoading || optionsError !== undefined || !configValid || !targetValid || !requiredFieldsValid || !changed || (permissionChanged && !permissionConfirmed)
+  const blocked = saving || optionsLoading || optionsError !== undefined || !configValid || !targetValid || !deliveryValid || !requiredFieldsValid || !changed || (permissionChanged && !permissionConfirmed)
 
   React.useEffect(() => {
     onDirtyChange?.(changed)
@@ -372,6 +417,9 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
           ...(pauseAfterFailures === task.pauseAfterConsecutiveFailures ? {} : { pauseAfterConsecutiveFailures: pauseAfterFailures }),
           ...(permissionChanged ? { permissionPreset, confirmPermissionChange: true as const } : {}),
           ...(targetChanged ? { confirmSessionTargetChange: true as const } : {}),
+          ...(deliveryChanged ? deliveryEnabled
+            ? { delivery: { botId: deliveryBotId, targetId: deliveryTargetId }, confirmDeliveryChange: true as const }
+            : { delivery: null } : {}),
           ...(executionChanged ? {
             execution: {
               ...(targetChanged ? { target: pinned ? { mode: 'pinned-session' as const, sessionId: targetSessionId } : { mode: 'fresh' as const } } : {}),
@@ -568,7 +616,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
               ariaLabel={t('executionMode')}
               disabled={saving || targetLocked}
               options={[{ value: 'fresh', label: t('executionFresh') }, { value: 'pinned-session', label: t('executionExisting') }]}
-              onChange={(value) => { setTargetMode(value as 'fresh' | 'pinned-session'); setTargetConfirmed(false) }}
+              onChange={(value) => setTargetMode(value as 'fresh' | 'pinned-session')}
             />
           </Field>
           {targetLocked && <p className="am-alert is-info is-full">{t('sessionTargetLocked')}</p>}
@@ -587,7 +635,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
                 ariaLabel={t('targetSession')}
                 disabled={saving || targetLocked || sessionsLoading || sessionLoadError !== undefined || sessions.phase !== 'ready'}
                 options={sessionOptions}
-                onChange={(id) => { setTargetSessionId(id); setTargetConfirmed(false) }}
+                onChange={setTargetSessionId}
               />
               {!sessionsLoading && sessionLoadError === undefined && sessionOptions.length === 1 && <small className="am-field-hint">{t('noSessionMatches')}</small>}
             </Field>
@@ -599,15 +647,8 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
             {!sessionsLoading && sessionLoadError === undefined && targetSessionId !== '' && selectedSession === undefined &&
               <p className="am-alert is-warning is-full">{t('targetSessionUnavailable')}</p>}
           </>}
-          {targetChanged && (!pinned || targetSessionId !== '') && <div className="am-alert is-warning is-full am-confirm">
-            <Switch
-              checked={targetConfirmed}
-              disabled={saving || targetLocked || (pinned && selectedSession === undefined)}
-              label={t('confirmSessionTarget', { target: pinned ? selectedSession?.displayTitle ?? targetSessionId : t('executionFresh') })}
-              onChange={setTargetConfirmed}
-            />
-            <span aria-hidden="true">{t('confirmSessionTarget', { target: pinned ? selectedSession?.displayTitle ?? targetSessionId : t('executionFresh') })}</span>
-          </div>}
+          {targetChanged && (!pinned || targetSessionId !== '') &&
+            <small className="am-field-hint is-full">{t('sessionTargetSaveHint', { target: pinned ? selectedSession?.displayTitle ?? targetSessionId : t('executionFresh') })}</small>}
         </Section>
 
         {!pinned && <Disclosure title={t('agentExecution')}>
@@ -652,6 +693,51 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
             <SkillPicker skills={skills} options={options} disabled={saving || optionsLoading} t={t} onChange={setSkills} />
           </Field>
         </Disclosure>}
+
+        <Disclosure title={<>{t('messageDelivery')}
+          <Tooltip label={t('deliveryHelpText')} side="bottom" maxWidth={320}>
+            <button type="button" className="am-icon-button am-help-button" aria-label={t('deliveryHelp')} aria-description={t('deliveryHelpText')}
+              onClick={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.focus() }}>
+              ?
+            </button>
+          </Tooltip>
+        </>}>
+          <Field full label={t('deliveryEnabled')} hint={t('deliveryHint')}>
+            <Switch checked={deliveryEnabled} disabled={saving || targetLocked} label={t('deliveryEnabled')}
+              onChange={setDeliveryEnabled} />
+          </Field>
+          {targetLocked && <p className="am-alert is-info is-full">{t('deliveryLocked')}</p>}
+          {deliveryEnabled && <>
+            <Field full label={t('deliveryBot')}>
+              <Select value={deliveryBotId} options={deliveryBotOptions} ariaLabel={t('deliveryBot')}
+                disabled={saving || targetLocked || deliveryOptions?.available !== true}
+                onChange={(id) => { setDeliveryBotId(id); setDeliveryTargetId('') }} />
+            </Field>
+            <Field full label={t('deliveryTarget')}>
+              <Select value={deliveryTargetId} options={deliveryTargetOptions} ariaLabel={t('deliveryTarget')}
+                disabled={saving || targetLocked || deliveryLoading || deliveryError !== undefined || deliveryOptions?.available !== true || deliveryBotId === ''}
+                onChange={setDeliveryTargetId} />
+            </Field>
+            {deliveryLoading && <p className="am-alert is-info is-full" role="status">{t('deliveryLoading')}</p>}
+            {!deliveryLoading && deliveryError === undefined && deliveryOptions?.available === true && <div className="is-full">
+              {deliveryOptions.bots.length === 0 && <p className="am-alert is-info">{t('deliveryNoBots')}</p>}
+              <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => setDeliveryRefresh((value) => value + 1)}>{t('refresh')}</Button>
+            </div>}
+            {!deliveryLoading && (deliveryError !== undefined || deliveryOptions?.available === false) && <div className="is-full">
+              <p className="am-alert is-warning" role="alert">{deliveryError !== undefined
+                ? t('deliveryLoadFailed', { error: deliveryError }) : t('deliveryUnavailable')}</p>
+              <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => setDeliveryRefresh((value) => value + 1)}>{t('retry')}</Button>
+            </div>}
+            {!deliveryLoading && deliveryError === undefined && deliveryOptions?.available === true &&
+              ((deliveryBotId !== '' && selectedDeliveryBot === undefined) || (deliveryTargetId !== '' && selectedDeliveryTarget === undefined)) &&
+              <p className="am-alert is-warning is-full">{t('deliverySavedUnavailable')}</p>}
+            {!deliveryLoading && deliveryError === undefined && deliveryOptions?.available === true && deliveryBotId !== '' &&
+              selectedDeliveryBot !== undefined && deliveryTargets.length === 0 &&
+              <p className="am-alert is-info is-full">{t('deliveryNoTargets')}</p>}
+            {deliveryChanged && deliveryBotId !== '' && deliveryTargetId !== '' &&
+              <small className="am-field-hint is-full">{t('deliverySaveHint', { bot: deliveryBotId, target: deliveryTargetId })}</small>}
+          </>}
+        </Disclosure>
 
         <Disclosure title={t('notifications')}>
           <Field label={t('notifications')}>
