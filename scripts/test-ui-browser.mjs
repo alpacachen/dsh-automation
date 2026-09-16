@@ -58,7 +58,16 @@ try {
     if (method === 'GET' && path === '/tasks') return route.fulfill({ status: listError ? 503 : 200, json: listError ? { error: 'Fixture connection unavailable' } : { tasks, scheduler: { status: 'healthy', consecutiveFailures: 0 } } })
     writes.push({ path, method, body: route.request().postDataJSON() })
     const task = tasks.find((item) => path.split('/')[2] === item.id)
-    if (method === 'PATCH' && task) Object.assign(task, route.request().postDataJSON())
+    if (method === 'PATCH' && task) {
+      const { execution, confirmSessionTargetChange, ...patch } = route.request().postDataJSON()
+      Object.assign(task, patch)
+      if (execution) {
+        if (execution.target) assert.equal(confirmSessionTargetChange, true)
+        task.execution = { ...task.execution, ...execution,
+          ...(execution.target?.mode === 'pinned-session' ? { target: { ...execution.target, workspaceId: task.execution.workspaceId, cwd: task.execution.cwd, fallback: 'fail' } } : {}),
+        }
+      }
+    }
     if (method === 'DELETE') tasks = tasks.filter((item) => item !== task)
     if (method === 'POST' && task && path.endsWith('/pause')) { task.status = 'paused'; task.nextRunAt = null }
     if (method === 'POST' && task && path.endsWith('/resume')) { task.status = 'active'; task.nextRunAt = instant(3600000) }
@@ -110,6 +119,16 @@ try {
       const components = {}
       let dictionaries
       const snapshot = { active: 'en' }
+      let sessionSnapshot
+      const sessionListeners = new Set()
+      const setSessionPhase = (phase) => {
+        sessionSnapshot = { ...sessionSnapshot, phase,
+          ids: phase === 'ready' ? sessionRows.map((row) => row.id) : [],
+          byId: phase === 'ready' ? Object.fromEntries(sessionRows.map((row) => [row.id, row])) : {},
+        }
+        for (const listener of sessionListeners) listener()
+      }
+      window.__automationSetSessionPhase = setSessionPhase
       const ctx = {
         locale: {
           register(_namespace, values) { dictionaries = values; return () => {} },
@@ -120,18 +139,35 @@ try {
           inject(_name, install) { return install() },
           register(meta, Component) { components[meta.id] = Component; return () => {} },
         },
-        sessions: { open(id) { window.__automationOpenedSession = id } },
+        sessions: { open(id) { window.__automationOpenedSession = id }, async refresh() {
+          if (window.__automationSessionRefreshError) throw new Error('Fixture sessions unavailable')
+          // Host remote failures resolve without making the first baseline ready.
+          if (!window.__automationSessionRefreshPending) queueMicrotask(() => setSessionPhase('ready'))
+        } },
         uiWorkspace: { async connectWorkspace() { return 'fixture-new-session' } },
       }
       mod.apply(ctx)
       document.body.replaceChildren()
       const root = document.createElement('div')
       document.body.append(root)
+      const sessionRows = [
+        { id: 'fixture-current', displayTitle: 'Current workspace conversation', cwd: '/preview/project', running: false },
+        { id: 'fixture-target', displayTitle: 'Release planning', cwd: '/preview/project', running: false },
+        { id: 'fixture-fork', displayTitle: 'Forked planning', cwd: '/preview/project', parentId: 'fixture-current', running: false },
+        { id: 'fixture-busy', displayTitle: 'Busy conversation', cwd: '/preview/project', running: true },
+        { id: 'fixture-other', displayTitle: 'Other workspace conversation', cwd: '/other/project', running: false },
+        { id: 'fixture-child', displayTitle: 'Child conversation', cwd: '/preview/project', parentId: 'fixture-current', origin: 'subagent', running: false },
+        { id: 'fixture-detached', displayTitle: 'Detached conversation', cwd: '/preview/project', running: false },
+        { id: 'fixture-archived', displayTitle: 'Archived conversation', cwd: '/preview/project', running: false },
+      ].map((row) => ({ ...row, blank: false, updatedAt: Date.now() }))
+      sessionSnapshot = { current: 'fixture-current', phase: 'ready', ids: sessionRows.map((row) => row.id), byId: Object.fromEntries(sessionRows.map((row) => [row.id, row])) }
+      const subscribeSessions = (listener) => { sessionListeners.add(listener); return () => sessionListeners.delete(listener) }
+      const getSessions = () => sessionSnapshot
       ReactDOM.createRoot(root).render(React.createElement(React.Fragment, null,
         React.createElement(components.automation, { wide: true }),
         React.createElement(components['automation-panel'], {
-          useSessions: (select) => select({ current: 'fixture-current' }),
-          useWorkspaces: (select) => select({ items: [{ workspaceId: 'fixture-workspace', sessionIds: ['fixture-current'] }] }),
+          useSessions: (select) => select(React.useSyncExternalStore(subscribeSessions, getSessions, getSessions)),
+          useWorkspaces: (select) => select({ archivedSessionIds: ['fixture-archived'], items: [{ workspaceId: 'fixture-workspace', sessionIds: ['fixture-current', 'fixture-target', 'fixture-fork', 'fixture-busy', 'fixture-child', 'fixture-archived'] }] }),
         }),
       ))
     })
@@ -206,7 +242,113 @@ try {
   await page.locator('.am-editor-disclosure[open]').scrollIntoViewIfNeeded()
   await assertTypography()
   await page.screenshot({ path: `${output}/editor-advanced.png` })
+  // Manual-only session targeting: filter, confirmation, save and reset.
+  await page.getByRole('button', { name: 'Session mode', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Use an existing session', exact: true }).click()
+  assert.equal(await page.locator('.am-editor-disclosure').count(), 2, 'Pinned sessions do not expose ignored fresh-agent controls')
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true)
+  await page.getByRole('button', { name: 'Target session', exact: true }).click()
+  assert.equal(await page.getByRole('menuitem', { name: /Other workspace|Child conversation|Detached conversation|Archived conversation/ }).count(), 0)
+  await page.getByRole('menuitem', { name: /Forked planning/ }).click()
+  await page.getByRole('switch', { name: 'I confirm future runs will use: Forked planning.', exact: true }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), false)
+  await page.getByRole('button', { name: 'Target session', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Release planning/ }).click()
+  await page.getByRole('textbox', { name: 'Search session title or ID' }).fill('no-such-title')
+  await page.getByRole('button', { name: 'Target session', exact: true }).click()
+  assert.equal(await page.getByRole('menuitem', { name: /Current workspace conversation/ }).count(), 0)
+  await page.getByRole('menuitem', { name: /Release planning/ }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true)
+  await page.getByRole('switch', { name: 'I confirm future runs will use: Release planning.', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Search session title or ID' }).fill('')
+  await page.getByRole('button', { name: 'Session mode', exact: true }).scrollIntoViewIfNeeded()
+  await assertTypography()
+  await page.screenshot({ path: `${output}/session-target.png` })
+  await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''))
+  await assertTypography()
+  await page.screenshot({ path: `${output}/session-target-dark.png` })
+  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.locator('.am-row.is-selected').click()
+  await page.getByRole('button', { name: 'Target session', exact: true }).scrollIntoViewIfNeeded()
+  assert.equal(await page.getByRole('button', { name: 'Target session', exact: true }).isVisible(), true)
+  assert.equal(await page.locator('.am-editor').evaluate((el) => el.scrollWidth > el.clientWidth), false)
+  assert.equal(await page.locator('.am-panel').evaluate((el) => el.scrollWidth > el.clientWidth), false)
+  await assertTypography()
+  await page.screenshot({ path: `${output}/session-target-mobile.png` })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await page.locator('.am-editor').waitFor({ state: 'hidden' })
+  const targetWrite = writes.filter((write) => write.method === 'PATCH').at(-1).body
+  assert.deepEqual(targetWrite, { confirmSessionTargetChange: true, execution: { target: { mode: 'pinned-session', sessionId: 'fixture-target' } } })
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByRole('button', { name: 'Target session', exact: true }).waitFor()
+  assert.match(await page.getByRole('button', { name: 'Target session', exact: true }).innerText(), /Release planning/)
+  await page.getByRole('button', { name: 'Session mode', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'New session for every run', exact: true }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true)
+  await page.getByRole('switch', { name: 'I confirm future runs will use: New session for every run.', exact: true }).click()
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await page.locator('.am-editor').waitFor({ state: 'hidden' })
+  assert.deepEqual(writes.filter((write) => write.method === 'PATCH').at(-1).body.execution.target, { mode: 'fresh' })
+  // Failure/retry is local, with no target writes until explicitly confirmed.
+  await page.evaluate(() => { window.__automationSessionRefreshError = true })
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByRole('button', { name: 'Session mode', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Use an existing session', exact: true }).click()
+  await page.getByText(/Fixture sessions unavailable/).waitFor()
+  await page.evaluate(() => { window.__automationSessionRefreshError = false })
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await page.getByText(/Fixture sessions unavailable/).waitFor({ state: 'hidden' })
   await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click()
+  // Match Host's actual first-baseline failure: refresh resolves, phase stays
+  // pending. Retrying publishes readiness separately via the observable store.
+  await page.evaluate(() => {
+    window.__automationSessionRefreshPending = true
+    window.__automationSetSessionPhase('pending')
+  })
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByRole('button', { name: 'Session mode', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Use an existing session', exact: true }).click()
+  await page.getByText(/No session list was received/).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Target session', exact: true }).isDisabled(), true)
+  assert.equal(await page.getByText('Loading sessions…', { exact: true }).count(), 0)
+  // A ready snapshot arriving after promise settlement must clear a provisional
+  // readiness error without remounting or resetting the user's dirty form.
+  await page.evaluate(() => window.__automationSetSessionPhase('ready'))
+  await page.getByText(/No session list was received/).waitFor({ state: 'hidden' })
+  assert.equal(await page.getByRole('button', { name: 'Target session', exact: true }).isDisabled(), false)
+  await page.evaluate(() => window.__automationSetSessionPhase('pending'))
+  await page.getByText(/No session list was received/).waitFor()
+  await page.evaluate(() => { window.__automationSessionRefreshPending = false })
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await page.getByText(/No session list was received/).waitFor({ state: 'hidden' })
+  await page.getByRole('button', { name: 'Target session', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Forked planning/ }).click()
+  assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true, 'Retry must not confirm the destination')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click()
+  // Queued/running tasks lock the destination without blocking ordinary edits.
+  const firstTask = tasks.find((task) => task.id === 'dependencies')
+  firstTask.runs.push({ id: 'fixture-queued', trigger: 'manual', status: 'queued', enqueuedAt: instant(0) })
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  assert.equal(await page.getByRole('button', { name: 'Session mode', exact: true }).isDisabled(), true)
+  await page.getByText('Wait until queued or running work finishes before changing the session.').waitFor()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+  firstTask.runs.pop()
+  // A missing saved target remains visible and can be repaired by switching fresh.
+  firstTask.execution.target = { mode: 'pinned-session', sessionId: 'missing-session', workspaceId: 'fixture-workspace', cwd: '/preview/project', fallback: 'fail' }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.getByText('The saved session is unavailable in this workspace. Select another session or use a new session.').waitFor()
+  assert.match(await page.getByRole('button', { name: 'Target session', exact: true }).innerText(), /missing-session/)
+  await page.getByRole('button', { name: 'Session mode', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'New session for every run', exact: true }).click()
+  await page.getByRole('switch', { name: 'I confirm future runs will use: New session for every run.', exact: true }).click()
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+  await page.locator('.am-editor').waitFor({ state: 'hidden' })
   await page.getByRole('textbox', { name: 'Search automations' }).fill('no matching task')
   await page.getByText('No automation matches “no matching task”.').waitFor()
   await page.getByRole('button', { name: 'Show all tasks' }).click()
@@ -220,6 +362,7 @@ try {
   await assertTypography()
   await page.screenshot({ path: `${output}/tablet.png` })
   await page.setViewportSize({ width: 390, height: 844 })
+  if (await page.getByRole('button', { name: 'Back to list', exact: true }).isVisible()) await page.getByRole('button', { name: 'Back to list', exact: true }).click()
   await page.locator('.am-row').first().click()
   await assertTypography()
   await page.screenshot({ path: `${output}/mobile-detail.png` })

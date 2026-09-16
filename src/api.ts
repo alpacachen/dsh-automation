@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from './controller.js'
-import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type UpdateAutomationRequest } from './types.js'
+import { AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
 
@@ -44,7 +44,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   return value as Record<string, unknown>
 }
 
-function parseUpdate(body: Record<string, unknown>, currentPermission: string): UpdateAutomationRequest {
+function parseUpdate(body: Record<string, unknown>, current: AutomationTask): UpdateAutomationRequest {
   if (Object.keys(body).some((key) => !['name', 'prompt', 'schedule', 'notificationPolicy', 'pauseAfterConsecutiveFailures', 'permissionPreset', 'confirmPermissionChange', 'execution', 'confirmSessionTargetChange'].includes(key))) {
     throw new Error('Update body contains an unknown field.')
   }
@@ -56,11 +56,13 @@ function parseUpdate(body: Record<string, unknown>, currentPermission: string): 
   const schedule = body.schedule === undefined ? undefined : AutomationScheduleSchema.parse(body.schedule)
   const notificationPolicy = body.notificationPolicy === undefined ? undefined : NotificationPolicySchema.parse(body.notificationPolicy)
   const permissionPreset = body.permissionPreset === undefined ? undefined : AutomationPermissionPresetSchema.parse(body.permissionPreset)
-  if (permissionPreset !== undefined && permissionPreset !== currentPermission && body.confirmPermissionChange !== true) {
+  if (permissionPreset !== undefined && permissionPreset !== current.security.permissionPreset && body.confirmPermissionChange !== true) {
     throw new Error('confirmPermissionChange must be true when changing permissions.')
   }
-  const execution = parseExecutionPatch(body.execution)
-  if (execution?.target !== undefined) throw new Error('Pinned session target changes are unsupported via REST in MVP.')
+  const execution = parseExecutionPatch(body.execution, current.execution)
+  if (body.confirmSessionTargetChange !== undefined && typeof body.confirmSessionTargetChange !== 'boolean') {
+    throw new Error('confirmSessionTargetChange must be boolean.')
+  }
   return {
     ...(body.name === undefined ? {} : { name: body.name as string }),
     ...(body.prompt === undefined ? {} : { prompt: body.prompt as string }),
@@ -69,11 +71,11 @@ function parseUpdate(body: Record<string, unknown>, currentPermission: string): 
     ...(body.pauseAfterConsecutiveFailures === undefined ? {} : { pauseAfterConsecutiveFailures: body.pauseAfterConsecutiveFailures as boolean }),
     ...(permissionPreset === undefined ? {} : { permissionPreset }),
     ...(permissionPreset === undefined || body.confirmPermissionChange !== true ? {} : { permissionChangeConfirmed: true as const }),
-    ...(execution === undefined ? {} : { execution }),
+    ...(execution === undefined ? {} : { execution: { ...execution, ...(execution.target !== undefined && body.confirmSessionTargetChange === true ? { sessionTargetConfirmed: true as const } : {}) } }),
   }
 }
 
-function parseExecutionPatch(value: unknown): UpdateAutomationRequest['execution'] {
+function parseExecutionPatch(value: unknown, execution: AutomationTask['execution']): UpdateAutomationRequest['execution'] {
   if (value === undefined) return undefined
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('execution must be an object.')
   const input = value as Record<string, unknown>
@@ -101,8 +103,10 @@ function parseExecutionPatch(value: unknown): UpdateAutomationRequest['execution
   if (input.target !== undefined) {
     if (typeof input.target !== 'object' || input.target === null || Array.isArray(input.target)) throw new Error('execution.target must be an object.')
     const value = input.target as Record<string, unknown>
-    if (value.mode === 'fresh') target = { mode: 'fresh' as const }
-    else if (value.mode === 'pinned-session' && typeof value.sessionId === 'string' && typeof value.workspaceId === 'string' && typeof value.cwd === 'string' && value.fallback === 'fail') target = { mode: 'pinned-session' as const, sessionId: value.sessionId, workspaceId: value.workspaceId, cwd: value.cwd, fallback: 'fail' as const }
+    if (value.mode === 'fresh' && Object.keys(value).every((key) => key === 'mode')) target = { mode: 'fresh' }
+    else if (value.mode === 'pinned-session' && Object.keys(value).every((key) => key === 'mode' || key === 'sessionId') && typeof value.sessionId === 'string' && value.sessionId.trim()) {
+      target = { mode: 'pinned-session', sessionId: value.sessionId, workspaceId: execution.workspaceId, cwd: execution.cwd, fallback: 'fail' }
+    }
     else throw new Error('execution.target is invalid.')
   }
   return {
@@ -110,7 +114,7 @@ function parseExecutionPatch(value: unknown): UpdateAutomationRequest['execution
     ...(provider === undefined ? {} : { provider }),
     ...(model === undefined ? {} : { model }),
     ...(skills === undefined ? {} : { skills }),
-    ...(target === undefined ? {} : { target, sessionTargetConfirmed: true as const }),
+    ...(target === undefined ? {} : { target }),
   }
 }
 
@@ -152,7 +156,7 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
           return
         }
         if (req.method === 'PATCH' && action === undefined) {
-          send(res, 200, { task: await controller.update(id, parseUpdate(await readJson(req), controller.get(id).security.permissionPreset)) })
+          send(res, 200, { task: await controller.update(id, parseUpdate(await readJson(req), controller.get(id))) })
           return
         }
         if (req.method === 'DELETE' && action === undefined) {

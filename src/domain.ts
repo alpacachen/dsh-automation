@@ -182,7 +182,6 @@ export class AutomationDomain {
     }
     if (request.execution !== undefined) {
       validateExecutionPatch(request.execution)
-      if (request.execution.target !== undefined) validateTarget({ ...this.get(id).execution, target: request.execution.target }, request.execution.sessionTargetConfirmed === true)
     }
     const name = request.name?.trim()
     const prompt = request.prompt?.trim()
@@ -197,6 +196,16 @@ export class AutomationDomain {
     return this.store.mutate(async (state) => {
       const task = state.tasks[id]
       if (task === undefined) throw new AutomationDomainError('task_not_found', `Automation ${id} was not found.`)
+      const target = request.execution?.target
+      if (target !== undefined) {
+        const current = task.execution.target ?? { mode: 'fresh' as const }
+        const changed = target.mode !== current.mode || (target.mode === 'pinned-session' && current.mode === 'pinned-session' && target.sessionId !== current.sessionId)
+        if (changed) {
+          if (request.execution?.sessionTargetConfirmed !== true) throw new Error('Explicit user confirmation is required to change the session target.')
+          if (task.runs.some(nonTerminal)) throw new AutomationDomainError('invalid_state', 'Session target cannot change while an automation has a queued or running run.')
+        }
+        validateTarget({ ...task.execution, target }, true)
+      }
       await beforeCommit?.(structuredClone(task))
       if (name !== undefined) task.name = name
       if (prompt !== undefined) task.prompt = prompt
@@ -212,7 +221,6 @@ export class AutomationDomain {
       if (request.execution !== undefined) {
         const patch = request.execution
         if (patch.target !== undefined) {
-          validateTarget({ ...task.execution, target: patch.target }, patch.sessionTargetConfirmed === true)
           task.execution.target = patch.target
         }
         for (const key of ['agentPreset', 'provider', 'model'] as const) {

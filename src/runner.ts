@@ -1,27 +1,24 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { AutomationRun, AutomationTask } from './types.js'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { AutomationRunner, AutomationRunnerResult, AutomationRunCancelReason } from './scheduler.js'
 import { AgentConfiguration } from './agent-configuration.js'
-import { unattendedAgents, pendingUnattendedSessionIds } from './runtime-marker.js'
+import { unattendedAgents } from './runtime-marker.js'
 
 import '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-agent-presets'
 import '@deepseek-ai/dsh-permission-presets'
 import '@deepseek-ai/dsh-session-title'
 import '@deepseek-ai/dsh-workspace'
-
-type PersistedSessionInspector = { inspect(id: SessionId): Promise<{ meta: { id: SessionId; cwd?: string } }> }
+import type {} from '@deepseek-ai/dsh-session-persistence'
 
 const RUN_SUMMARY_MAX_CHARS = 500
 
-function finalAssistantSummary(events: readonly SessionEvent[]): string | undefined {
-  const event = [...events].reverse().find((entry) => entry.type === 'assistant/message')
-  if (event?.type !== 'assistant/message') return undefined
+function assistantSummary(event: SessionEvent<'assistant/message'>): string | undefined {
   const summary = event.data.message.content
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
@@ -53,12 +50,14 @@ function promptFor(task: AutomationTask, run: AutomationRun): string {
   ].join('\n')
 }
 
+type ActiveRun = {
+  cancelReason?: AutomationRunCancelReason
+  cancelValidation?: () => void
+  cancelTurn?: () => void
+}
+
 export class DshAutomationRunner implements AutomationRunner {
-  private readonly active = new Map<string, {
-    agent?: Agent
-    cancelReason?: AutomationRunCancelReason
-    cancelValidation?: () => void
-  }>()
+  private readonly active = new Map<string, ActiveRun>()
 
   constructor(
     private readonly ctx: Context,
@@ -70,10 +69,11 @@ export class DshAutomationRunner implements AutomationRunner {
     if (active === undefined) return false
     if (active.cancelReason !== undefined) return true
     const cancelPreparation = active.cancelValidation
+    if (cancelPreparation === undefined && active.cancelTurn === undefined) return false
     active.cancelReason = reason
     cancelPreparation?.()
     try {
-      active.agent?.cancel({ kind: 'hook', reason: `automation_${reason}` })
+      active.cancelTurn?.()
     } catch {
       if (cancelPreparation !== undefined) return true
       delete active.cancelReason
@@ -82,13 +82,108 @@ export class DshAutomationRunner implements AutomationRunner {
     return true
   }
 
+  /** Follow one identified message, not the lifetime of the whole shared Agent. */
+  private async runTurn(
+    agent: Agent,
+    task: AutomationTask,
+    run: AutomationRun,
+    active: ActiveRun,
+    skills: Awaited<ReturnType<AgentConfiguration['loadSelectedSkills']>>,
+  ): Promise<AutomationRunnerResult> {
+    const message = createUserMessage({
+      content: [{ type: 'text', text: promptFor(task, run) }],
+      source: { kind: 'plugin', plugin: 'automation' },
+    })
+    let turn: number | undefined
+    let summary: string | undefined
+    let settled = false
+    let marked = false
+    const disposers: Array<() => void> = []
+    let resolveCompletion!: (result: AutomationRunnerResult) => void
+    const completion = new Promise<AutomationRunnerResult>((resolve) => { resolveCompletion = resolve })
+    const cleanup = () => {
+      delete active.cancelTurn
+      if (marked) { unattendedAgents.delete(agent); marked = false }
+      for (const dispose of disposers.splice(0)) dispose()
+    }
+    const finish = (status: AutomationRunnerResult['status'], error?: string) => {
+      if (settled) return
+      settled = true
+      // Synchronous turn/end cleanup: the driver may start a human follow-up
+      // before the Promise continuation below gets a chance to run.
+      cleanup()
+      resolveCompletion({ status, sessionId: agent.session.header.id,
+        ...(summary === undefined ? {} : { summary }), ...(error === undefined ? {} : { error }) })
+    }
+    try {
+      disposers.push(this.ctx.on('agent/inbox/claimed', (event) => {
+        if (settled || event.agent !== agent || event.message.id !== message.id) return
+        turn = event.turn
+        unattendedAgents.add(agent)
+        marked = true
+        if (active.cancelReason !== undefined) agent.cancel({ kind: 'hook', reason: `automation_${active.cancelReason}` }, { keepInbox: true })
+      }))
+      disposers.push(this.ctx.on('agent/inbox/discarded', (event) => {
+        if (event.agent === agent && event.message.id === message.id && turn === undefined) {
+          finish('failed', 'Automation input was removed before execution.')
+        }
+      }))
+      disposers.push(this.ctx.on('agent/disposed', (event) => {
+        if (event.agent === agent) finish('failed', 'Automation Agent was disposed before its turn completed.')
+      }))
+      disposers.push(this.ctx.on('session/event', (session, event) => {
+        if (session !== agent.session || turn === undefined) return
+        if (event.type === 'assistant/message' && event.data.turn === turn) summary = assistantSummary(event)
+        if (event.type === 'turn/end' && event.data.turn === turn) {
+          const reason = event.data.reason
+          finish(reason.kind === 'completed' ? 'succeeded' : 'failed', reason.kind === 'completed' ? undefined
+            : `Automation turn ended with ${reason.kind === 'error' ? reason.error.message : reason.kind}.`)
+        }
+      }))
+      disposers.push(this.ctx.effect(() => () => {
+        if (settled) return
+        try { active.cancelTurn?.() } finally { finish('failed', 'Automation runner stopped before its turn completed.') }
+      }, 'automation.turn()'))
+      let admitted = false
+      try {
+        // Public status also reports maintenance as idle. The official maintenance
+        // reservation is the atomic true-idle check; enqueue synchronously under it.
+        await agent.runMaintenance(async () => {
+          admitted = true
+          if (agent.inbox.nextTurn.length > 0 || agent.inbox.nextStep.length > 0 || unattendedAgents.has(agent)) {
+            throw new Error('target_session_busy: target session has pending work.')
+          }
+          if (active.cancelReason !== undefined) {
+            finish('failed', `Automation run canceled before execution: ${active.cancelReason}.`)
+            return
+          }
+          this.ctx.permissionPresets.set(agent.session, task.security.permissionPreset)
+          delete active.cancelValidation
+          active.cancelTurn = () => {
+            if (turn === undefined) {
+              // Never cancel maintenance or discard someone else's queued prompt.
+              // A claimed notification may already be dispatching. If removal
+              // loses that race, the claimed listener applies the pending cancel.
+              if (agent.inbox.remove(message.id)) finish('failed', 'Automation input was canceled before execution.')
+            } else {
+              agent.cancel({ kind: 'hook', reason: `automation_${active.cancelReason}` }, { keepInbox: true })
+            }
+          }
+          for (const skill of skills) agent.inject(createUserMessage({ content: [{ type: 'text', text: skill.text }], source: skill.source }))
+          agent.followup(message)
+        })
+      } catch (error) {
+        if (!admitted) throw new Error('target_session_busy: target session has active work or maintenance.')
+        throw error
+      }
+      return await completion
+    } finally {
+      cleanup()
+    }
+  }
+
   async run(task: AutomationTask, run: AutomationRun): Promise<AutomationRunnerResult> {
-    const active: {
-      agent?: Agent
-      cancelReason?: AutomationRunCancelReason
-      cancelValidation?: () => void
-    } = {}
-    this.active.set(run.id, active)
+    const active: ActiveRun = {}
     const configuredTarget = task.execution.target ?? { mode: 'fresh' as const }
     const pinned = (run.executionTarget?.mode ?? configuredTarget.mode) === 'pinned-session'
     const target = pinned && configuredTarget.mode === 'pinned-session'
@@ -100,13 +195,13 @@ export class DshAutomationRunner implements AutomationRunner {
     }
     const sessionId = SessionId(pinned ? target!.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
     let handle: AgentHandle | undefined
+    let agent: Agent | undefined
     let keepSessionLive = false
+    this.active.set(run.id, active)
     try {
       const canceledDuringValidation = new Promise<never>((_resolve, reject) => {
         active.cancelValidation = () => reject(new Error(`Automation run canceled before Agent creation: ${active.cancelReason}.`))
       })
-      // Older state could capture provider/model independently. Preserve that
-      // runtime behavior while new create/update requests require a complete pair.
       const validationExecution = pinned
         ? { ...task.execution, agentPreset: undefined, provider: undefined, model: undefined, skills: [] }
         : task.execution
@@ -119,15 +214,16 @@ export class DshAutomationRunner implements AutomationRunner {
       if (workspace === undefined) throw new Error('target_workspace_mismatch: target workspace is unavailable.')
       if (target !== undefined && workspace.path !== target.cwd) throw new Error('target_workspace_mismatch: target cwd does not match.')
       if (pinned) {
-        pendingUnattendedSessionIds.add(sessionId)
-        const persistence = (this.ctx as Context & { sessionPersistence?: PersistedSessionInspector }).sessionPersistence
+        const persistence = this.ctx.get('sessionPersistence')
         if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
-        let inspection: { meta: { id: SessionId; cwd?: string } }
-        try { inspection = await persistence.inspect(sessionId) } catch { throw new Error('target_session_not_found: pinned session could not be resolved.') }
-        if (inspection.meta.id !== sessionId) throw new Error('target_session_not_found: pinned session could not be resolved.')
-        if (inspection.meta.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match.')
-        handle = await this.ctx.agents.resume({ resumeSessionId: sessionId })
-        pendingUnattendedSessionIds.delete(sessionId)
+        const snapshot = await persistence.stat(sessionId)
+        if (snapshot === undefined || snapshot.header.id !== sessionId) throw new Error('target_session_not_found: pinned session could not be resolved.')
+        if (snapshot.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match.')
+        agent = this.ctx.agents.get(sessionId)
+        if (agent === undefined && active.cancelReason === undefined) {
+          handle = await this.ctx.agents.resume({ resumeSessionId: sessionId })
+          agent = handle.agent
+        }
       } else {
         handle = await this.ctx.agents.create({
           sessionId,
@@ -138,72 +234,33 @@ export class DshAutomationRunner implements AutomationRunner {
           },
           setup: async (agentCtx) => { await this.ctx.agentPresets.mount(agentCtx, task.execution.agentPreset) },
         })
+        agent = handle.agent
       }
-      if (handle === undefined) throw new Error('target_resume_failed: unable to create agent runtime.')
-      active.agent = handle.agent
-      if (pinned) unattendedAgents.add(handle.agent)
-      if (pinned && handle.agent.session.header.id !== sessionId) throw new Error('target_session_not_found: resumed session id does not match target.')
-      if (pinned && handle.agent.session.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: resumed session cwd does not match.')
-      if (pinned && handle.agent.status !== 'idle') throw new Error('target_session_busy: target session is busy.')
-      this.ctx.permissionPresets.set(handle.agent.session, task.security.permissionPreset)
-      const selectedSkills = pinned ? [] : await Promise.race([
-        this.agentConfiguration.loadSelectedSkills(handle.agent, task), canceledDuringValidation,
-      ])
-      delete active.cancelValidation
-      for (const skill of selectedSkills) {
-        handle.agent.inject(createUserMessage({
-          content: [{ type: 'text', text: skill.text }],
-          source: skill.source,
-        }))
-      }
-      if (!pinned) {
-        this.ctx.sessionTitle.rename(handle.agent.session, titleFor(task, run))
-        await this.ctx.sessions.flush(handle.agent.session)
-        await workspace.attachSession(sessionId)
-      }
-
       if (active.cancelReason !== undefined) {
         keepSessionLive = !pinned
         return { status: 'failed', sessionId, error: `Automation run canceled before execution: ${active.cancelReason}.` }
       }
-
-      const baseline = handle.agent.session.snapshotEvents().length
-      handle.agent.followup(createUserMessage({
-        content: [{ type: 'text', text: promptFor(task, run) }],
-        source: { kind: 'plugin', plugin: 'automation' },
-      }))
-      await handle.agent.whenIdle()
-      await this.ctx.sessions.flush(handle.agent.session)
-
-      const runEvents = handle.agent.session.snapshotEvents(SessionLogOffset(baseline))
-      const summary = finalAssistantSummary(runEvents)
-      const turnEnd = runEvents
-        .filter((event) => event.type === 'turn/end')
-        .at(-1)
-      let result: AutomationRunnerResult = {
-        status: 'succeeded',
-        sessionId,
-        ...(summary === undefined ? {} : { summary }),
+      if (agent === undefined) throw new Error('target_resume_failed: unable to create agent runtime.')
+      if (pinned && agent.session.header.id !== sessionId) throw new Error('target_session_not_found: resumed session id does not match target.')
+      if (pinned && agent.session.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: resumed session cwd does not match.')
+      if (pinned && (agent.status !== 'idle' || unattendedAgents.has(agent))) throw new Error('target_session_busy: target session is busy.')
+      const selectedSkills = pinned ? [] : await Promise.race([
+        this.agentConfiguration.loadSelectedSkills(agent, task), canceledDuringValidation,
+      ])
+      if (!pinned) {
+        this.ctx.sessionTitle.rename(agent.session, titleFor(task, run))
+        await this.ctx.sessions.flush(agent.session)
+        await workspace.attachSession(sessionId)
       }
-      if (turnEnd?.type === 'turn/end' && turnEnd.data.reason.kind !== 'completed') {
-        const reason = turnEnd.data.reason
-        const detail = reason.kind === 'error' ? reason.error.message : reason.kind
-        result = {
-          status: 'failed',
-          sessionId,
-          ...(summary === undefined ? {} : { summary }),
-          error: `Automation turn ended with ${detail}.`,
-        }
-      }
-      // The owner fiber disposes this handle on plugin shutdown. Disposing it here
-      // emits session/removed, so the sidebar drops the new persisted session.
-      keepSessionLive = !pinned
+      // Once the session can accept shared input, retiring this run must not
+      // dispose it and abort a queued human turn. Its owning fiber retains it.
+      keepSessionLive = true
+      const result = await this.runTurn(agent, task, run, active, selectedSkills)
+      await this.ctx.sessions.flush(agent.session)
       return result
     } finally {
       delete active.cancelValidation
       this.active.delete(run.id)
-      if (handle !== undefined) unattendedAgents.delete(handle.agent)
-      pendingUnattendedSessionIds.delete(sessionId)
       if (handle !== undefined && !keepSessionLive) await handle.dispose()
     }
   }

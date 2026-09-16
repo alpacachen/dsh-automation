@@ -8,6 +8,7 @@ import {
   IconCloseOutline16,
   IconSearchOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { AgentConfigurationOptions, AutomationExecutionPatch, AutomationTaskView } from '../types.js'
 import { t as translate } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
@@ -18,7 +19,10 @@ import { request } from './store.js'
 export type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>> & {
   permissionPreset?: AutomationTaskView['security']['permissionPreset']
   confirmPermissionChange?: true
-  execution?: AutomationExecutionPatch
+  confirmSessionTargetChange?: true
+  execution?: Omit<AutomationExecutionPatch, 'target' | 'sessionTargetConfirmed'> & {
+    target?: { mode: 'fresh' } | { mode: 'pinned-session'; sessionId: string }
+  }
 }
 
 const WEEKDAY_KEYS = {
@@ -170,8 +174,11 @@ function SkillPicker({ skills, options, disabled, t, onChange }: {
  * @param props.saving - a write is in flight; every control locks.
  * @returns the editor form.
  */
-export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }: {
+export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSessions, saving, t, onSave, onCancel, onDirtyChange }: {
   task: AutomationTaskView
+  sessions: SessionListState
+  workspaceSessionIds: readonly string[]
+  refreshSessions: () => Promise<void>
   saving: boolean
   t: typeof translate
   onSave: (body: TaskUpdateBody) => void
@@ -181,6 +188,49 @@ export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }:
   const fallbackInstant = task.schedule.kind === 'once'
     ? task.schedule.fireAt
     : task.nextRunAt ?? new Date(Date.now() + 60 * 60_000).toISOString()
+  const initialTarget = task.execution.target
+  const [targetMode, setTargetMode] = React.useState(initialTarget?.mode ?? 'fresh')
+  const [targetSessionId, setTargetSessionId] = React.useState(initialTarget?.mode === 'pinned-session' ? initialTarget.sessionId : '')
+  const [targetConfirmed, setTargetConfirmed] = React.useState(false)
+  const [sessionQuery, setSessionQuery] = React.useState('')
+  const [sessionsLoading, setSessionsLoading] = React.useState(true)
+  const [sessionsError, setSessionsError] = React.useState<string>()
+  const [sessionRefresh, setSessionRefresh] = React.useState(0)
+  React.useEffect(() => {
+    let active = true
+    setSessionsLoading(true)
+    setSessionsError(undefined)
+    void refreshSessions().then(() => {
+      if (active) setSessionsError(undefined)
+    }, (error: unknown) => {
+      if (active) setSessionsError(error instanceof Error ? error.message : String(error))
+    }).finally(() => { if (active) setSessionsLoading(false) })
+    return () => { active = false }
+  }, [refreshSessions, sessionRefresh])
+  // refresh() can resolve after a remote failure. Derive readiness from the
+  // latest render, not the snapshot captured when the refresh began.
+  const sessionLoadError = sessionsError ?? (!sessionsLoading && sessions.phase !== 'ready' ? t('sessionsNotReady') : undefined)
+  const pinned = targetMode === 'pinned-session'
+  const targetChanged = targetMode !== (initialTarget?.mode ?? 'fresh') ||
+    (pinned && targetSessionId !== (initialTarget?.mode === 'pinned-session' ? initialTarget.sessionId : ''))
+  const targetLocked = task.running || task.runs.some((run) => run.status === 'queued' || run.status === 'running')
+  const candidates = sessions.ids.map((id) => sessions.byId[id]!).filter((session) =>
+    session !== undefined && workspaceSessionIds.includes(session.id) && session.cwd === task.execution.cwd && session.origin !== 'subagent')
+  const selectedSession = candidates.find((session) => session.id === targetSessionId)
+  const targetValid = !targetChanged || (!targetLocked && targetConfirmed && (!pinned ||
+    (!sessionsLoading && sessionLoadError === undefined && sessions.phase === 'ready' && selectedSession !== undefined)))
+  const needle = sessionQuery.trim().toLowerCase()
+  const sessionOptions: SelectOption[] = [
+    { value: '', label: t('selectSession'), disabled: true },
+    ...(targetSessionId !== '' && selectedSession === undefined
+      ? [{ value: targetSessionId, label: `${targetSessionId} · ${t('unavailable')}`, disabled: true }] : []),
+    ...candidates.filter((session) => session.id === targetSessionId ||
+      `${session.displayTitle} ${session.id}`.toLowerCase().includes(needle)).map((session) => ({
+      value: session.id,
+      label: `${session.displayTitle}${session.id === sessions.current ? ` · ${t('currentSession')}` : ''}${session.running ? ` · ${t('statusRunning')}` : ''}`,
+      hint: `${session.id} · ${new Date(session.updatedAt).toLocaleString()}`,
+    })),
+  ]
   const [name, setName] = React.useState(task.name)
   const [prompt, setPrompt] = React.useState(task.prompt)
   const [notificationPolicy, setNotificationPolicy] = React.useState(task.notificationPolicy)
@@ -218,8 +268,9 @@ export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }:
     : task.schedule.kind !== 'recurring' || effectiveRrule !== initialComparableRrule || timeZone !== task.schedule.timeZone || normalizedStartAt !== task.schedule.startAt)
   const permissionChanged = permissionPreset !== task.security.permissionPreset
   const modelChanged = provider !== (task.execution.provider ?? '') || model !== (task.execution.model ?? '')
-  const executionChanged = agentPreset !== (task.execution.agentPreset ?? '') || modelChanged ||
-    skills.join('\0') !== task.execution.skills.join('\0')
+  const agentExecutionChanged = !pinned && (agentPreset !== (task.execution.agentPreset ?? '') || modelChanged ||
+    skills.join('\0') !== task.execution.skills.join('\0'))
+  const executionChanged = targetChanged || agentExecutionChanged
   const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged || permissionChanged ||
     executionChanged || notificationPolicy !== task.notificationPolicy || pauseAfterFailures !== task.pauseAfterConsecutiveFailures
   const selectedPermission = options?.permissions.find((entry) => entry.id === permissionPreset)
@@ -227,12 +278,12 @@ export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }:
   const selectedPresetAvailable = agentPreset === '' || options?.presets.some((entry) => entry.id === agentPreset && entry.broken === undefined)
   const skillsAvailable = skills.every((entry) => options?.skills.some((option) => option.name === entry))
   const legacyPartialModelUnchanged = !modelChanged && ((task.execution.provider === undefined) !== (task.execution.model === undefined))
-  const configValid = selectedPresetAvailable !== false && skillsAvailable && selectedPermission !== undefined &&
-    (((provider === '') === (model === '')) || legacyPartialModelUnchanged)
+  const configValid = selectedPermission !== undefined && (pinned || (selectedPresetAvailable !== false && skillsAvailable &&
+    (((provider === '') === (model === '')) || legacyPartialModelUnchanged)))
   const requiredFieldsValid = name.trim() !== '' && prompt.trim() !== '' && (kind === 'once'
     ? onceAt.trim() !== '' && Number.isFinite(new Date(onceAt).getTime())
     : effectiveRrule.trim() !== '' && timeZone.trim() !== '' && startAt.trim() !== '')
-  const blocked = saving || optionsLoading || optionsError !== undefined || !configValid || !requiredFieldsValid || !changed || (permissionChanged && !permissionConfirmed)
+  const blocked = saving || optionsLoading || optionsError !== undefined || !configValid || !targetValid || !requiredFieldsValid || !changed || (permissionChanged && !permissionConfirmed)
 
   React.useEffect(() => {
     onDirtyChange?.(changed)
@@ -320,14 +371,18 @@ export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }:
           ...(notificationPolicy === task.notificationPolicy ? {} : { notificationPolicy }),
           ...(pauseAfterFailures === task.pauseAfterConsecutiveFailures ? {} : { pauseAfterConsecutiveFailures: pauseAfterFailures }),
           ...(permissionChanged ? { permissionPreset, confirmPermissionChange: true as const } : {}),
+          ...(targetChanged ? { confirmSessionTargetChange: true as const } : {}),
           ...(executionChanged ? {
             execution: {
-              ...(agentPreset === (task.execution.agentPreset ?? '') ? {} : { agentPreset: agentPreset || null }),
-              ...((provider === (task.execution.provider ?? '') && model === (task.execution.model ?? '')) ? {} : {
-                provider: provider || null,
-                model: model || null,
+              ...(targetChanged ? { target: pinned ? { mode: 'pinned-session' as const, sessionId: targetSessionId } : { mode: 'fresh' as const } } : {}),
+              ...(!agentExecutionChanged ? {} : {
+                ...(agentPreset === (task.execution.agentPreset ?? '') ? {} : { agentPreset: agentPreset || null }),
+                ...((provider === (task.execution.provider ?? '') && model === (task.execution.model ?? '')) ? {} : {
+                  provider: provider || null,
+                  model: model || null,
+                }),
+                ...(skills.join('\0') === task.execution.skills.join('\0') ? {} : { skills }),
               }),
-              ...(skills.join('\0') === task.execution.skills.join('\0') ? {} : { skills }),
             },
           } : {}),
         })
@@ -506,7 +561,56 @@ export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }:
           <p className="am-alert is-warning" role="status">{t('permission')} · {t('confirmPermissionChange', { permission: selectedPermission?.name ?? permissionPreset })}</p>
         )}
 
-        <Disclosure title={t('agentExecution')}>
+        <Section title={t('executionDestination')}>
+          <Field full label={t('executionMode')} hint={t('sessionWorkspaceHint', { cwd: task.execution.cwd })}>
+            <Select
+              value={targetMode}
+              ariaLabel={t('executionMode')}
+              disabled={saving || targetLocked}
+              options={[{ value: 'fresh', label: t('executionFresh') }, { value: 'pinned-session', label: t('executionExisting') }]}
+              onChange={(value) => { setTargetMode(value as 'fresh' | 'pinned-session'); setTargetConfirmed(false) }}
+            />
+          </Field>
+          {targetLocked && <p className="am-alert is-info is-full">{t('sessionTargetLocked')}</p>}
+          {pinned && <>
+            <Field full label={t('targetSession')} hint={t('pinnedSessionHint')}>
+              <Input
+                icon={<IconSearchOutline16 />}
+                value={sessionQuery}
+                disabled={saving || targetLocked}
+                placeholder={t('sessionSearch')}
+                aria-label={t('sessionSearch')}
+                onChange={(event) => setSessionQuery(event.target.value)}
+              />
+              <Select
+                value={targetSessionId}
+                ariaLabel={t('targetSession')}
+                disabled={saving || targetLocked || sessionsLoading || sessionLoadError !== undefined || sessions.phase !== 'ready'}
+                options={sessionOptions}
+                onChange={(id) => { setTargetSessionId(id); setTargetConfirmed(false) }}
+              />
+              {!sessionsLoading && sessionLoadError === undefined && sessionOptions.length === 1 && <small className="am-field-hint">{t('noSessionMatches')}</small>}
+            </Field>
+            {(sessionsLoading || sessions.phase !== 'ready') && sessionLoadError === undefined && <p className="am-alert is-info is-full" role="status">{t('sessionsLoading')}</p>}
+            {sessionLoadError !== undefined && <div className="is-full">
+              <p className="am-alert is-error" role="alert">{t('sessionsFailure', { error: sessionLoadError })}</p>
+              <Button type="button" variant="ghost" size="sm" disabled={saving || sessionsLoading} onClick={() => setSessionRefresh((value) => value + 1)}>{t('retry')}</Button>
+            </div>}
+            {!sessionsLoading && sessionLoadError === undefined && targetSessionId !== '' && selectedSession === undefined &&
+              <p className="am-alert is-warning is-full">{t('targetSessionUnavailable')}</p>}
+          </>}
+          {targetChanged && (!pinned || targetSessionId !== '') && <div className="am-alert is-warning is-full am-confirm">
+            <Switch
+              checked={targetConfirmed}
+              disabled={saving || targetLocked || (pinned && selectedSession === undefined)}
+              label={t('confirmSessionTarget', { target: pinned ? selectedSession?.displayTitle ?? targetSessionId : t('executionFresh') })}
+              onChange={setTargetConfirmed}
+            />
+            <span aria-hidden="true">{t('confirmSessionTarget', { target: pinned ? selectedSession?.displayTitle ?? targetSessionId : t('executionFresh') })}</span>
+          </div>}
+        </Section>
+
+        {!pinned && <Disclosure title={t('agentExecution')}>
           <Field
             full
             label={t('agentPreset')}
@@ -547,7 +651,7 @@ export function TaskEditor({ task, saving, t, onSave, onCancel, onDirtyChange }:
           <Field full label={t('selectedSkills')}>
             <SkillPicker skills={skills} options={options} disabled={saving || optionsLoading} t={t} onChange={setSkills} />
           </Field>
-        </Disclosure>
+        </Disclosure>}
 
         <Disclosure title={t('notifications')}>
           <Field label={t('notifications')}>

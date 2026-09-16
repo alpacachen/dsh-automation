@@ -5,8 +5,9 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { AutomationController } from '../src/controller.js'
 import { registerAutomationTools } from '../src/tools.js'
+import { unattendedAgents } from '../src/runtime-marker.js'
 
-function setup() {
+function setup(missingTarget = false) {
   const definitions: any[] = []
   let disposed = 0
   const agent = {
@@ -30,9 +31,10 @@ function setup() {
     runs: [],
   }
   const rootCtx = {
+    get(name: string) { return (this as unknown as Record<string, unknown>)[name] },
     workspaceRegistry: { create: async () => ({ id: 'workspace', path: '/tmp/workspace' }) },
     agentPresets: { composedPreset: () => 'standard' },
-    sessionPersistence: { inspect: async (id: SessionId) => ({ meta: { id, cwd: '/tmp/workspace' } }) },
+    sessionPersistence: { stat: async (id: SessionId) => missingTarget ? undefined : ({ header: { id, cwd: '/tmp/workspace' } }) },
   } as unknown as Context
   const toolCtx = {
     tools: {
@@ -111,6 +113,24 @@ test('registers complete Agent management tool surface and disposes it', async (
   assert.equal(fixture.disposed(), 8)
 })
 
+test('a borrowed Agent cannot use existing automation tools until its unattended run ends', async () => {
+  const fixture = setup()
+  unattendedAgents.add(fixture.exec.agent)
+  try {
+    for (const tool of fixture.definitions) {
+      const args = tool.name === 'automation_create'
+        ? { name: 'Task', prompt: 'Do work.', permission_preset: 'read-only', creation_confirmed: true, once_at: '2026-03-21T00:00:00.000Z' }
+        : { id: 'automation-task' }
+      const result = await tool.execute(args, fixture.exec)
+      assert.equal(result.ok, false, tool.name)
+      assert.match(result.error, /unavailable during an unattended run/, tool.name)
+    }
+    assert.deepEqual(fixture.calls, [])
+  } finally { unattendedAgents.delete(fixture.exec.agent) }
+  assert.equal((await fixture.byName('automation_run').execute({ id: 'automation-task' }, fixture.exec)).ok, true)
+  fixture.dispose()
+})
+
 test('create rejects mixed or incomplete schedule selectors and wrong agent scope', async () => {
   const fixture = setup()
   const create = fixture.byName('automation_create')
@@ -159,7 +179,21 @@ test('pinned create requires durable target confirmation and update rejects targ
     session_target_confirmed: true, creation_confirmed: true,
   }, fixture.exec)
   assert.equal(result.ok, true)
-  const update = await fixture.byName('automation_update').execute({ id: 'automation-task', execution_mode: 'pinned-session', target_session_id: 'other', session_target_confirmed: true }, fixture.exec)
-  assert.equal(update.ok, false)
-  assert.match(update.error, /target changes are unsupported/)
+  const missing = setup(true)
+  const rejected = await missing.byName('automation_create').execute({
+    name: 'Pinned', prompt: 'Continue.', once_at: '2026-03-21T00:00:00.000Z',
+    permission_preset: 'read-only', execution_mode: 'pinned-session', target_session_id: 'missing',
+    session_target_confirmed: true, creation_confirmed: true,
+  }, missing.exec)
+  assert.equal(rejected.ok, false)
+  assert.match(rejected.error, /target_session_not_found/)
+  assert.equal(missing.calls.length, 0)
+  const definition = fixture.byName('automation_update')
+  for (const key of ['execution_mode', 'target_session_id', 'session_target_confirmed']) assert.equal(Object.hasOwn(definition.parameters, key), false)
+  for (const injection of [{ execution_mode: 'fresh' }, { target_session_id: 'other' }, { session_target_confirmed: true }, { execution: { target: { mode: 'fresh' } } }]) {
+    const update = await definition.execute({ id: 'automation-task', name: 'Changed', ...injection }, fixture.exec)
+    assert.equal(update.ok, false)
+    assert.match(update.error, /target changes are unsupported/)
+  }
+  assert.equal(fixture.calls.some((call) => call.startsWith('update:')), false)
 })

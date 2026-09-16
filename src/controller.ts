@@ -1,3 +1,7 @@
+import type { Context } from '@deepseek-ai/cordis'
+import { SessionId } from '@deepseek-ai/dsh-session'
+import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import { AutomationDomainError, type AutomationDomain } from './domain.js'
 import type { AutomationScheduler } from './scheduler.js'
 import type { AgentConfiguration } from './agent-configuration.js'
@@ -11,12 +15,30 @@ import type {
   UpdateAutomationRequest,
 } from './types.js'
 
+export async function validatePersistedSessionTarget(ctx: Context, task: AutomationTask, sessionId: string): Promise<void> {
+  const persistence = ctx.get('sessionPersistence')
+  if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
+  const id = SessionId(sessionId)
+  const snapshot = await persistence.stat(id)
+  if (snapshot === undefined || snapshot.header.id !== id) throw new Error('target_session_not_found: target session could not be resolved.')
+  if (snapshot.header.cwd !== task.execution.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match the task.')
+  const registry = ctx.get('workspaceRegistry')
+  const workspace = registry?.get(WorkspaceId(task.execution.workspaceId))
+  if (workspace === undefined || workspace.path !== task.execution.cwd || !workspace.sessionIds.includes(id)) {
+    throw new Error('target_workspace_mismatch: target session must belong to the task workspace.')
+  }
+  if (snapshot.header.origin === 'subagent' || registry?.archivedSessionIds.includes(id)) {
+    throw new Error('target_session_unavailable: select a visible ordinary session.')
+  }
+}
+
 export class AutomationController {
   constructor(
     readonly domain: AutomationDomain,
     readonly scheduler: AutomationScheduler,
     private readonly now: () => number = () => Date.now(),
     private readonly agentConfiguration?: AgentConfiguration,
+    private readonly validateSessionTarget?: (task: AutomationTask, sessionId: string) => Promise<void>,
   ) {}
 
   list(): AutomationTaskView[] {
@@ -43,7 +65,11 @@ export class AutomationController {
 
   async update(id: string, request: UpdateAutomationRequest): Promise<AutomationTask> {
     const agentConfiguration = this.agentConfiguration
-    const beforeCommit = agentConfiguration === undefined ? undefined : async (current: AutomationTask) => {
+    const beforeCommit = async (current: AutomationTask) => {
+      if (request.execution?.target?.mode === 'pinned-session') {
+        if (this.validateSessionTarget === undefined) throw new Error('target_session_unavailable: persisted session validation is unavailable.')
+        await this.validateSessionTarget(current, request.execution.target.sessionId)
+      }
       if (request.permissionPreset !== undefined && request.permissionPreset !== current.security.permissionPreset && request.permissionChangeConfirmed !== true) {
         throw new Error('Explicit user confirmation is required to change permissions.')
       }
@@ -51,8 +77,10 @@ export class AutomationController {
       const preservesLegacyPartialModel = request.execution?.provider === undefined
         && request.execution?.model === undefined
         && ((current.execution.provider === undefined) !== (current.execution.model === undefined))
-      await agentConfiguration.validate(
-        execution,
+      await agentConfiguration?.validate(
+        execution.target?.mode === 'pinned-session'
+          ? { ...execution, agentPreset: undefined, provider: undefined, model: undefined, skills: [] }
+          : execution,
         request.permissionPreset ?? current.security.permissionPreset,
         { allowLegacyPartialModel: preservesLegacyPartialModel },
       )
@@ -119,7 +147,7 @@ function applyExecutionPatch(
   patch: UpdateAutomationRequest['execution'],
 ): AutomationTask['execution'] {
   if (patch === undefined) return current
-  const next = { ...current, ...(patch.skills === undefined ? {} : { skills: normalizedSkills(patch.skills) }) }
+  const next = { ...current, ...(patch.target === undefined ? {} : { target: patch.target }), ...(patch.skills === undefined ? {} : { skills: normalizedSkills(patch.skills) }) }
   for (const key of ['agentPreset', 'provider', 'model'] as const) {
     if (patch[key] === undefined) continue
     if (patch[key] === null) delete next[key]
