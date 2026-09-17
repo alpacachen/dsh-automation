@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+import { assertOverrideId, assertProviderModelPair } from './validation.js'
 import type { AutomationController } from './controller.js'
 import { AutomationDeliverySchema, AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
 
@@ -90,15 +91,13 @@ function parseExecutionPatch(value: unknown, execution: AutomationTask['executio
   const nullableString = (key: 'agentPreset' | 'provider' | 'model') => {
     const entry = input[key]
     if (entry !== undefined && entry !== null && typeof entry !== 'string') throw new Error(`execution.${key} must be a string or null.`)
-    if (typeof entry === 'string' && !entry.trim()) throw new Error(`execution.${key} must not be empty.`)
+    assertOverrideId(entry, `execution.${key}`)
     return entry as string | null | undefined
   }
   const agentPreset = nullableString('agentPreset')
   const provider = nullableString('provider')
   const model = nullableString('model')
-  if ((provider === undefined) !== (model === undefined) || (provider !== undefined && ((provider === null) !== (model === null)))) {
-    throw new Error('execution.provider and execution.model must be set or cleared together.')
-  }
+  assertProviderModelPair(provider, model)
   if (input.skills !== undefined && (!Array.isArray(input.skills) || input.skills.some((name) => typeof name !== 'string'))) {
     throw new Error('execution.skills must be an array of strings.')
   }
@@ -154,11 +153,11 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
           return
         }
         const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop|options))?$/.exec(suffix)
-        if (match === null) {
+        if (match?.[1] === undefined) {
           send(res, 404, { error: 'Automation API route not found.' })
           return
         }
-        const id = decodeURIComponent(match[1]!)
+        const id = decodeURIComponent(match[1])
         const action = match[2]
         if (req.method === 'GET' && action === 'options') {
           const candidate = url.searchParams.has('agentPreset') ? url.searchParams.get('agentPreset') || null : undefined

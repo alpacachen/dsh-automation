@@ -2,6 +2,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import { AutomationError } from './errors.js'
+import { applyExecutionPatch, normalizeSkills } from './validation.js'
 import { AutomationDomainError, type AutomationDomain } from './domain.js'
 import type { AutomationScheduler } from './scheduler.js'
 import type { AgentConfiguration } from './agent-configuration.js'
@@ -19,18 +21,18 @@ import type {
 
 export async function validatePersistedSessionTarget(ctx: Context, task: AutomationTask, sessionId: string): Promise<void> {
   const persistence = ctx.get('sessionPersistence')
-  if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
+  if (persistence === undefined) throw new AutomationError('target_session_unavailable', 'persisted session inspection is unavailable.')
   const id = SessionId(sessionId)
   const snapshot = await persistence.stat(id)
-  if (snapshot === undefined || snapshot.header.id !== id) throw new Error('target_session_not_found: target session could not be resolved.')
-  if (snapshot.header.cwd !== task.execution.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match the task.')
+  if (snapshot === undefined || snapshot.header.id !== id) throw new AutomationError('target_session_not_found', 'target session could not be resolved.')
+  if (snapshot.header.cwd !== task.execution.cwd) throw new AutomationError('target_workspace_mismatch', 'target session cwd does not match the task.')
   const registry = ctx.get('workspaceRegistry')
   const workspace = registry?.get(WorkspaceId(task.execution.workspaceId))
   if (workspace === undefined || workspace.path !== task.execution.cwd || !workspace.sessionIds.includes(id)) {
-    throw new Error('target_workspace_mismatch: target session must belong to the task workspace.')
+    throw new AutomationError('target_workspace_mismatch', 'target session must belong to the task workspace.')
   }
   if (snapshot.header.origin === 'subagent' || registry?.archivedSessionIds.includes(id)) {
-    throw new Error('target_session_unavailable: select a visible ordinary session.')
+    throw new AutomationError('target_session_unavailable', 'select a visible ordinary session.')
   }
 }
 
@@ -156,24 +158,6 @@ export class AutomationController {
   }
 }
 
-function applyExecutionPatch(
-  current: AutomationTask['execution'],
-  patch: UpdateAutomationRequest['execution'],
-): AutomationTask['execution'] {
-  if (patch === undefined) return current
-  const next = { ...current, ...(patch.target === undefined ? {} : { target: patch.target }), ...(patch.skills === undefined ? {} : { skills: normalizedSkills(patch.skills) }) }
-  for (const key of ['agentPreset', 'provider', 'model'] as const) {
-    if (patch[key] === undefined) continue
-    if (patch[key] === null) delete next[key]
-    else next[key] = patch[key].trim()
-  }
-  return next
-}
-
-function normalizedSkills(skills: readonly string[]): string[] {
-  return skills.map((name) => name.trim())
-}
-
 function normalizedExecution(execution: AutomationTask['execution']): AutomationTask['execution'] {
   return {
     ...execution,
@@ -181,6 +165,6 @@ function normalizedExecution(execution: AutomationTask['execution']): Automation
     ...(execution.agentPreset === undefined ? {} : { agentPreset: execution.agentPreset.trim() }),
     ...(execution.provider === undefined ? {} : { provider: execution.provider.trim() }),
     ...(execution.model === undefined ? {} : { model: execution.model.trim() }),
-    skills: normalizedSkills(execution.skills),
+    skills: normalizeSkills(execution.skills),
   }
 }

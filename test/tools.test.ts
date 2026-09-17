@@ -6,6 +6,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { AutomationController } from '../src/controller.js'
 import { registerAutomationTools } from '../src/tools.js'
 import { unattendedAgents } from '../src/runtime-marker.js'
+import { AgentConfiguration } from '../src/agent-configuration.js'
 
 function setup(missingTarget = false) {
   const definitions: any[] = []
@@ -45,12 +46,19 @@ function setup(missingTarget = false) {
     },
   } as unknown as Context
   const calls: string[] = []
+  const createRequests: Parameters<AutomationController['create']>[0][] = []
+  const updateRequests: Parameters<AutomationController['update']>[1][] = []
+  const optionCalls: unknown[][] = []
+  const options = { presets: [], models: [], modelFailures: [], permissions: [], skills: [] }
   const controller = {
-    create: async (request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean; permissionPreset: 'read-only' | 'danger-full-access' }) => {
+    options: async (...args: unknown[]) => { optionCalls.push(args); return options },
+    create: async (request: Parameters<AutomationController['create']>[0]) => {
+      createRequests.push(request)
       calls.push(`create:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}:${request.permissionPreset}`)
       return { ...task, notificationPolicy: request.notificationPolicy ?? 'failures', pauseAfterConsecutiveFailures: request.pauseAfterConsecutiveFailures ?? false, security: { ...task.security, permissionPreset: request.permissionPreset } }
     },
-    update: async (_id: string, request: { notificationPolicy?: string; pauseAfterConsecutiveFailures?: boolean; permissionPreset?: string }) => {
+    update: async (_id: string, request: Parameters<AutomationController['update']>[1]) => {
+      updateRequests.push(request)
       calls.push(`update:${request.notificationPolicy}:${request.pauseAfterConsecutiveFailures}:${request.permissionPreset}`)
       return { ...task, ...request, security: { ...task.security, permissionPreset: request.permissionPreset ?? task.security.permissionPreset } }
     },
@@ -65,10 +73,12 @@ function setup(missingTarget = false) {
       return { id: 'run-manual', status: 'queued' }
     },
   } as unknown as AutomationController
-  const dispose = registerAutomationTools(rootCtx, toolCtx, agent, controller)
+  const agentConfiguration = new AgentConfiguration(rootCtx)
+  agentConfiguration.options = async (...args) => { optionCalls.push(args); return options }
+  const dispose = registerAutomationTools(rootCtx, toolCtx, agent, controller, agentConfiguration)
   const byName = (name: string) => definitions.find((definition) => definition.name === name)
   const exec = { agent, signal: new AbortController().signal }
-  return { definitions, byName, exec, calls, dispose, disposed: () => disposed }
+  return { definitions, byName, exec, calls, createRequests, updateRequests, optionCalls, rootCtx, controller, dispose, disposed: () => disposed }
 }
 
 test('registers complete Agent management tool surface and disposes it', async () => {
@@ -186,7 +196,7 @@ test('pinned create requires durable target confirmation and update rejects targ
     session_target_confirmed: true, creation_confirmed: true,
   }, missing.exec)
   assert.equal(rejected.ok, false)
-  assert.match(rejected.error, /target_session_not_found/)
+  assert.match(rejected.error, /pinned session could not be resolved/)
   assert.equal(missing.calls.length, 0)
   const definition = fixture.byName('automation_update')
   for (const key of ['execution_mode', 'target_session_id', 'session_target_confirmed']) assert.equal(Object.hasOwn(definition.parameters, key), false)
@@ -202,4 +212,115 @@ test('pinned create requires durable target confirmation and update rejects targ
     assert.match(update.error, /Message delivery changes are manual-only/)
   }
   assert.equal(fixture.calls.some((call) => call.startsWith('update:')), false)
+})
+
+const createArgs = {
+  name: 'Task', prompt: 'Do work.', permission_preset: 'read-only',
+  creation_confirmed: true, once_at: '2026-03-21T00:00:00.000Z',
+}
+
+test('every tool rejects missing or foreign owner before side effects', async () => {
+  const fixture = setup()
+  for (const tool of fixture.definitions) {
+    for (const agent of [undefined, {}]) {
+      const args = tool.name === 'automation_create' ? createArgs : { id: 'task' }
+      assert.deepEqual(await tool.execute(args, { ...fixture.exec, agent }), {
+        ok: false, error: `${tool.name} must run in its owning agent scope.`,
+      })
+    }
+  }
+  assert.deepEqual(fixture.calls, [])
+  assert.deepEqual(fixture.optionCalls, [])
+})
+
+test('guard envelopes synchronous throws, asynchronous rejections, and missing deletes', async () => {
+  const fixture = setup()
+  fixture.controller.list = () => { throw new Error('list failed') }
+  fixture.controller.runNow = async () => { throw 'run failed' }
+  fixture.controller.delete = async () => false
+  for (const [name, error] of [
+    ['automation_list', 'list failed'], ['automation_run', 'run failed'],
+    ['automation_delete', 'Automation missing was not found.'],
+  ] as const) {
+    const tool = fixture.byName(name)
+    const result = await tool.execute({ id: 'missing' }, fixture.exec)
+    assert.deepEqual(result, { ok: false, error })
+    assert.deepEqual(tool.output.render({}, result), [{ type: 'text', text: JSON.stringify(result) }])
+  }
+})
+
+test('options preserves omitted, explicit, and Host-default preset selection and workspace guards', async () => {
+  const fixture = setup()
+  const tool = fixture.byName('automation_options')
+  for (const args of [{}, { agent_preset: '' }, { agent_preset: 'custom' }, { id: 'task' }, { id: 'task', agent_preset: '' }, { id: 'task', agent_preset: 'custom' }]) {
+    assert.equal((await tool.execute(args, fixture.exec)).ok, true)
+  }
+  assert.deepEqual(fixture.optionCalls, [
+    ['/tmp/workspace', 'standard'], ['/tmp/workspace', undefined], ['/tmp/workspace', 'custom'],
+    ['task', undefined], ['task', null], ['task', 'custom'],
+  ])
+  Object.defineProperty(fixture.exec.agent.session.header, 'cwd', { value: undefined })
+  for (const [name, args] of [['automation_options', {}], ['automation_create', createArgs]] as const) {
+    assert.deepEqual(await fixture.byName(name).execute(args, fixture.exec), {
+      ok: false, error: 'The current session has no workspace directory.',
+    })
+  }
+  assert.equal((await tool.execute({ id: 'task' }, fixture.exec)).ok, true)
+  assert.deepEqual(fixture.calls, [])
+})
+
+test('create captures one preset value, omits unavailable defaults, and validates schedule selectors', async () => {
+  const fixture = setup()
+  let presetReads = 0
+  fixture.rootCtx.agentPresets.composedPreset = () => { presetReads += 1; return undefined }
+  assert.equal((await fixture.byName('automation_create').execute(createArgs, fixture.exec)).ok, true)
+  assert.equal(presetReads, 1)
+  assert.equal(Object.hasOwn(fixture.createRequests[0]?.execution ?? {}, 'agentPreset'), false)
+  assert.deepEqual(fixture.createRequests[0]?.execution.target, { mode: 'fresh' })
+  const selectors = { once_at: createArgs.once_at, rrule: 'FREQ=DAILY', time_zone: 'UTC', start_at: '2026-03-20T09:00:00' }
+  for (let mask = 0; mask < 16; mask += 1) {
+    const schedule = Object.fromEntries(Object.entries(selectors).filter((_, index) => (mask & (1 << index)) !== 0))
+    const { once_at: _onceAt, ...confirmed } = createArgs
+    const result = await fixture.byName('automation_create').execute({ ...confirmed, ...schedule }, fixture.exec)
+    assert.equal(result.ok, mask === 1 || mask === 14, `selector mask ${mask}`)
+    if (!result.ok) assert.match(result.error, /either once_at/)
+  }
+  assert.deepEqual(fixture.createRequests.at(-1)?.schedule, { kind: 'recurring', rrule: 'FREQ=DAILY', timeZone: 'UTC', startAt: '2026-03-20T09:00:00' })
+  await assert.rejects(fixture.byName('automation_create').execute({ ...createArgs, once_at: 123 }, fixture.exec), /invalid arguments/)
+})
+
+test('pinned creation checks target, confirmation, persistence identity, and workspace', async () => {
+  for (const [overrides, persistence, error] of [
+    [{}, undefined, /target_session_id is required/],
+    [{ target_session_id: 'target' }, undefined, /confirmation is required for a pinned/],
+    [{ target_session_id: 'target', session_target_confirmed: true }, undefined, /inspection is unavailable/],
+    [{ target_session_id: 'target', session_target_confirmed: true }, { stat: async () => ({ header: { id: 'wrong', cwd: '/tmp/workspace' } }) }, /could not be resolved/],
+    [{ target_session_id: 'target', session_target_confirmed: true }, { stat: async () => ({ header: { id: 'target', cwd: '/other' } }) }, /cwd does not match/],
+  ] as const) {
+    const fixture = setup()
+    Object.defineProperty(fixture.rootCtx, 'sessionPersistence', { value: persistence })
+    const result = await fixture.byName('automation_create').execute({ ...createArgs, execution_mode: 'pinned-session', ...overrides }, fixture.exec)
+    assert.equal(result.ok, false)
+    assert.match(result.error, error)
+    assert.deepEqual(fixture.createRequests, [])
+  }
+})
+
+test('update preserves omission versus null, false, empty skills, and permission confirmations', async () => {
+  const fixture = setup()
+  const update = fixture.byName('automation_update')
+  for (const args of [
+    { name: 'Changed' },
+    { agent_preset: null, provider: null, model: null, skills: [], pause_after_failures: false },
+    { agent_preset: 'custom', provider: 'p', model: 'm', skills: ['second', 'first'] },
+    { permission_preset: 'danger-full-access' },
+    { permission_preset: 'read-only', permission_confirmed: true },
+  ]) assert.equal((await update.execute({ id: 'task', ...args }, fixture.exec)).ok, true)
+  assert.deepEqual(fixture.updateRequests, [
+    { name: 'Changed' },
+    { execution: { agentPreset: null, provider: null, model: null, skills: [] }, pauseAfterConsecutiveFailures: false },
+    { execution: { agentPreset: 'custom', provider: 'p', model: 'm', skills: ['second', 'first'] } },
+    { permissionPreset: 'danger-full-access' },
+    { permissionPreset: 'read-only', permissionChangeConfirmed: true },
+  ])
 })

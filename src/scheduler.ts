@@ -190,7 +190,7 @@ export class AutomationScheduler {
         && ['succeeded', 'failed', 'timed_out'].includes(savedRun.status)
         && savedRun.delivery.botId === pending.task.delivery?.botId
         && savedRun.delivery.targetId === pending.task.delivery?.targetId) {
-        pending.deliveryResult = await this.sendDelivery(pending.task, savedRun, pending.outcome)
+        pending.deliveryResult = await this.sendDelivery(pending.task, savedRun, pending.outcome, savedRun.delivery)
       }
     }
     if (pending.deliveryResult !== undefined) {
@@ -200,8 +200,7 @@ export class AutomationScheduler {
     if (this.pendingFinish === pending) this.pendingFinish = undefined
   }
 
-  private async sendDelivery(task: AutomationTask, run: AutomationRun, outcome: RunOutcome): Promise<AutomationRunDelivery> {
-    const delivery = run.delivery!
+  private async sendDelivery(task: AutomationTask, run: AutomationRun, outcome: RunOutcome, delivery: AutomationRunDelivery): Promise<AutomationRunDelivery> {
     const controller = new AbortController()
     this.activeDelivery = controller
     let cancelTimeout: (() => void) | undefined

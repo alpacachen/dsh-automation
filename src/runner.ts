@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import { AutomationError } from './errors.js'
 import type { AutomationRun, AutomationTask } from './types.js'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { AutomationRunner, AutomationRunnerResult, AutomationRunCancelReason } from './scheduler.js'
@@ -156,7 +157,7 @@ export class DshAutomationRunner implements AutomationRunner {
         await agent.runMaintenance(async () => {
           admitted = true
           if (agent.inbox.nextTurn.length > 0 || agent.inbox.nextStep.length > 0 || unattendedAgents.has(agent)) {
-            throw new Error('target_session_busy: target session has pending work.')
+            throw new AutomationError('target_session_busy', 'target session has pending work.')
           }
           if (active.cancelReason !== undefined) {
             finish('failed', `Automation run canceled before execution: ${active.cancelReason}.`)
@@ -178,7 +179,7 @@ export class DshAutomationRunner implements AutomationRunner {
           agent.followup(message)
         })
       } catch (error) {
-        if (!admitted) throw new Error('target_session_busy: target session has active work or maintenance.')
+        if (!admitted) throw new AutomationError('target_session_busy', 'target session has active work or maintenance.')
         throw error
       }
       return await completion
@@ -194,11 +195,11 @@ export class DshAutomationRunner implements AutomationRunner {
     const target = pinned && configuredTarget.mode === 'pinned-session'
       ? { ...configuredTarget, sessionId: run.executionTarget?.sessionId ?? configuredTarget.sessionId }
       : undefined
-    if (pinned && target === undefined) throw new Error('target_resume_failed: pinned target snapshot is unavailable.')
+    if (pinned && target === undefined) throw new AutomationError('target_resume_failed', 'pinned target snapshot is unavailable.')
     if (pinned && run.sessionId !== undefined && run.sessionId !== target?.sessionId) {
-      throw new Error('target_resume_failed: run target snapshot does not match its session id.')
+      throw new AutomationError('target_resume_failed', 'run target snapshot does not match its session id.')
     }
-    const sessionId = SessionId(pinned ? target!.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
+    const sessionId = SessionId(target !== undefined ? target.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
     let handle: AgentHandle | undefined
     let agent: Agent | undefined
     let keepSessionLive = false
@@ -216,22 +217,22 @@ export class DshAutomationRunner implements AutomationRunner {
       ])
       const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(target?.workspaceId ?? task.execution.workspaceId))
         ?? (pinned ? undefined : await this.ctx.workspaceRegistry.create(task.execution.cwd))
-      if (workspace === undefined) throw new Error('target_workspace_mismatch: target workspace is unavailable.')
-      if (target !== undefined && workspace.path !== target.cwd) throw new Error('target_workspace_mismatch: target cwd does not match.')
+      if (workspace === undefined) throw new AutomationError('target_workspace_mismatch', 'target workspace is unavailable.')
+      if (target !== undefined && workspace.path !== target.cwd) throw new AutomationError('target_workspace_mismatch', 'target cwd does not match.')
       if (pinned) {
         const persistence = this.ctx.get('sessionPersistence')
-        if (persistence === undefined) throw new Error('target_session_unavailable: persisted session inspection is unavailable.')
+        if (persistence === undefined) throw new AutomationError('target_session_unavailable', 'persisted session inspection is unavailable.')
         const snapshot = await persistence.stat(sessionId)
-        if (snapshot === undefined || snapshot.header.id !== sessionId) throw new Error('target_session_not_found: pinned session could not be resolved.')
-        if (snapshot.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: target session cwd does not match.')
+        if (snapshot === undefined || snapshot.header.id !== sessionId) throw new AutomationError('target_session_not_found', 'pinned session could not be resolved.')
+        if (snapshot.header.cwd !== target?.cwd) throw new AutomationError('target_workspace_mismatch', 'target session cwd does not match.')
         agent = this.ctx.agents.get(sessionId)
         if (agent === undefined && active.cancelReason === undefined) {
           // Bare agents.resume does not restore the Session's preset or model
           // selection. Let the same owner used by Web restore and retain it.
           const controller = this.ctx.get('sessionController')
-          if (controller === undefined) throw new Error('target_session_unavailable: Host session controller is unavailable.')
+          if (controller === undefined) throw new AutomationError('target_session_unavailable', 'Host session controller is unavailable.')
           const resolved = await controller.resolveAgent(sessionId)
-          if ('error' in resolved) throw new Error(`target_resume_failed: ${resolved.error.message}`)
+          if ('error' in resolved) throw new AutomationError('target_resume_failed', resolved.error.message)
           agent = resolved.agent
         }
       } else {
@@ -250,10 +251,10 @@ export class DshAutomationRunner implements AutomationRunner {
         keepSessionLive = !pinned
         return { status: 'failed', sessionId, error: `Automation run canceled before execution: ${active.cancelReason}.` }
       }
-      if (agent === undefined) throw new Error('target_resume_failed: unable to create agent runtime.')
-      if (pinned && agent.session.header.id !== sessionId) throw new Error('target_session_not_found: resumed session id does not match target.')
-      if (pinned && agent.session.header.cwd !== target?.cwd) throw new Error('target_workspace_mismatch: resumed session cwd does not match.')
-      if (pinned && (agent.status !== 'idle' || unattendedAgents.has(agent))) throw new Error('target_session_busy: target session is busy.')
+      if (agent === undefined) throw new AutomationError('target_resume_failed', 'unable to create agent runtime.')
+      if (pinned && agent.session.header.id !== sessionId) throw new AutomationError('target_session_not_found', 'resumed session id does not match target.')
+      if (pinned && agent.session.header.cwd !== target?.cwd) throw new AutomationError('target_workspace_mismatch', 'resumed session cwd does not match.')
+      if (pinned && (agent.status !== 'idle' || unattendedAgents.has(agent))) throw new AutomationError('target_session_busy', 'target session is busy.')
       const selectedSkills = pinned ? [] : await Promise.race([
         this.agentConfiguration.loadSelectedSkills(agent, task), canceledDuringValidation,
       ])

@@ -21,6 +21,7 @@ import '@deepseek-ai/dsh-workspace'
 import '@deepseek-ai/dsh-skill'
 
 export * from './types.js'
+export * from './errors.js'
 export * from './recurrence.js'
 export * from './store.js'
 export * from './domain.js'

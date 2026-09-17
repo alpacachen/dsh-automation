@@ -147,6 +147,29 @@ Schedule due → Global queue → Fresh or pinned persisted session → Agent ru
 
 The built-in release readiness, dependency watch, and daily handoff templates remain editable drafts; selecting one never sends it automatically.
 
+## Development
+
+Use a current Node 22 LTS release (22.13+ for ESLint) and pnpm:
+
+```sh
+pnpm install --ignore-scripts
+pnpm --config.verify-deps-before-run=false lint
+pnpm --config.verify-deps-before-run=false check
+pnpm --config.verify-deps-before-run=false test
+node scripts/build-client.mjs
+```
+
+ESLint checks production code and tests; production code must not use non-null assertions.
+Prettier is opt-in per file to avoid mixing repository-wide formatting with functional changes:
+
+```sh
+pnpm --config.verify-deps-before-run=false format src/path/to/changed-file.ts
+pnpm --config.verify-deps-before-run=false format:check src/path/to/changed-file.ts
+```
+
+Pass explicit paths (or quoted globs) to the formatting scripts. The shared configuration preserves
+single quotes and omits semicolons; generated output and the lockfile are ignored.
+
 ## License
 
 MIT

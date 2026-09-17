@@ -49,9 +49,12 @@ function parseLocalDateTime(value: string): LocalParts {
   const [date = '', time = ''] = value.split('T')
   const [year, month, day] = date.split('-').map(Number)
   const [hour, minute, second] = time.split(':').map(Number)
+  if (year === undefined || month === undefined || day === undefined || hour === undefined || minute === undefined || second === undefined) {
+    throw new ScheduleInputError('invalid_schedule', 'startAt must use YYYY-MM-DDTHH:mm:ss local wall-clock form.')
+  }
   const candidate = new Date(0)
-  candidate.setUTCFullYear(year!, month! - 1, day!)
-  candidate.setUTCHours(hour!, minute!, second!, 0)
+  candidate.setUTCFullYear(year, month - 1, day)
+  candidate.setUTCHours(hour, minute, second, 0)
   if (
     candidate.getUTCFullYear() !== year ||
     candidate.getUTCMonth() + 1 !== month ||
@@ -62,7 +65,7 @@ function parseLocalDateTime(value: string): LocalParts {
   ) {
     throw new ScheduleInputError('invalid_schedule', 'startAt must be a real local calendar time.')
   }
-  return { year: year!, month: month!, day: day!, hour: hour!, minute: minute!, second: second! }
+  return { year, month, day, hour, minute, second }
 }
 
 function normalizeRuleText(value: string): string {

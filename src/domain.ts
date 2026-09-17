@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { instant, latestDueOccurrence, nextOccurrence, validateSchedule } from './recurrence.js'
 import { AutomationStore } from './store.js'
 import { AutomationDeliverySchema, type AutomationDelivery, type AutomationRunDelivery } from './types.js'
+import { AutomationError } from './errors.js'
+import { assertOverrideId, assertProviderModelPair, applyExecutionPatch, normalizeSkills, validateExecutionPatch, validateTarget } from './validation.js'
 import type {
   AutomationRun,
   AutomationRunStatus,
-  AutomationSchedule,
   AutomationTask,
   AutomationTaskView,
   CreateAutomationRequest,
@@ -13,16 +14,12 @@ import type {
   UpdateAutomationRequest,
 } from './types.js'
 
-export class AutomationDomainError extends Error {
+export class AutomationDomainError extends AutomationError {
   constructor(
-    readonly code:
-      | 'task_not_found'
-      | 'invalid_state'
-      | 'run_in_progress'
-      | 'schedule_exhausted',
+    readonly code: 'task_not_found' | 'invalid_state' | 'run_in_progress' | 'schedule_exhausted',
     message: string,
   ) {
-    super(message)
+    super(code, message)
     this.name = 'AutomationDomainError'
   }
 }
@@ -133,12 +130,10 @@ export class AutomationDomain {
     const prompt = request.prompt.trim()
     if (!name) throw new Error('Automation name must not be empty.')
     if (!prompt) throw new Error('Automation prompt must not be empty.')
-    if ((request.execution.provider === undefined) !== (request.execution.model === undefined)) {
-      throw new Error('provider and model must be set together.')
-    }
+    assertProviderModelPair(request.execution.provider, request.execution.model)
     validateTarget({ ...request.execution, target: request.execution.target ?? { mode: 'fresh' } }, request.sessionTargetConfirmed === true)
     for (const value of [request.execution.agentPreset, request.execution.provider, request.execution.model]) {
-      if (value !== undefined && !value.trim()) throw new Error('Execution override ids must not be empty.')
+      assertOverrideId(value, 'Execution override ids')
     }
     const schedule = validateSchedule(request.schedule, now)
     const first = nextOccurrence(schedule, now)
@@ -241,25 +236,16 @@ export class AutomationDomain {
         task.security.grantedAt = instant(now)
       }
       if (request.execution !== undefined) {
-        const patch = request.execution
-        if (patch.target !== undefined) {
-          task.execution.target = patch.target
-        }
-        for (const key of ['agentPreset', 'provider', 'model'] as const) {
-          if (patch[key] === undefined) continue
-          if (patch[key] === null) delete task.execution[key]
-          else task.execution[key] = patch[key].trim()
-        }
-        if (patch.skills !== undefined) task.execution.skills = normalizeSkills(patch.skills)
+        task.execution = applyExecutionPatch(task.execution, request.execution)
       }
-      if (schedule !== undefined) {
+      if (schedule !== undefined && next !== undefined) {
         task.schedule = schedule
         if (task.status === 'paused') {
-          task.pausedNextRunAt = instant(next!)
+          task.pausedNextRunAt = instant(next)
           task.nextRunAt = null
         } else {
           task.status = 'active'
-          task.nextRunAt = instant(next!)
+          task.nextRunAt = instant(next)
           delete task.pausedAt
           delete task.pausedNextRunAt
         }
@@ -469,34 +455,5 @@ export class AutomationDomain {
       if ((delivery.status === 'failed' || delivery.status === 'unknown') && task.notificationPolicy !== 'never' && !shouldNotify(task, run.status)) task.unreadNotifications += 1
       pruneRuns(task, this.maxRunHistory)
     })
-  }
-}
-
-function normalizeSkills(skills: readonly string[]): string[] {
-  const normalized = skills.map((name) => name.trim())
-  if (normalized.some((name) => !name)) throw new Error('Skill names must not be empty.')
-  if (new Set(normalized).size !== normalized.length) throw new Error('Skill names must be unique.')
-  return normalized
-}
-
-function validateExecutionPatch(patch: NonNullable<UpdateAutomationRequest['execution']>): void {
-  const providerSupplied = patch.provider !== undefined
-  const modelSupplied = patch.model !== undefined
-  if (providerSupplied !== modelSupplied || (providerSupplied && ((patch.provider === null) !== (patch.model === null)))) {
-    throw new Error('provider and model must be set or cleared together.')
-  }
-  for (const value of [patch.agentPreset, patch.provider, patch.model]) {
-    if (typeof value === 'string' && !value.trim()) throw new Error('Execution override ids must not be empty.')
-  }
-  if (patch.skills !== undefined) normalizeSkills(patch.skills)
-}
-
-function validateTarget(execution: AutomationTask['execution'], confirmed: boolean): void {
-  const target = execution.target ?? { mode: 'fresh' as const }
-  if (target.mode === 'pinned-session') {
-    if (!confirmed) throw new Error('Explicit user confirmation is required for a pinned session target.')
-    if (target.workspaceId !== execution.workspaceId || target.cwd !== execution.cwd) {
-      throw new Error('Pinned session target workspace and cwd must match execution settings.')
-    }
   }
 }
