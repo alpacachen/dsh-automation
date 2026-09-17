@@ -1,174 +1,129 @@
+<p align="center">
+  <img src="docs/images/automation-overview-zh.png" alt="dsh-automation：自然语言调度、会话延续、模型与技能、权限控制、消息投递、失败保护" width="100%">
+</p>
+
 <div align="center">
 
-# dsh-automation
+<p>
+<strong>简体中文</strong> · <a href="README.md">English</a>
+</p>
 
-### 在 DSH 里，用一句话安排未来的 Agent 工作。
+<p>
+<a href="https://www.npmjs.com/package/@alpacachen/dsh-automation"><img alt="npm version" src="https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm"></a>
+<a href="https://awesome-dsh-plugin.com"><img alt="Awesome DSH Plugin" src="https://awesome-dsh-plugin.com/badge.svg"></a>
+<a href="https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
-支持单次与周期任务。默认每次运行创建全新可见会话，也可在明确确认后固定到持久化会话；目标失败时不会静默回退。
+<p>
+<a href="#开始使用">开始使用</a> &nbsp; / &nbsp; <a href="#demo">Demo</a> &nbsp; / &nbsp; <a href="docs/reference.zh.md">使用参考</a> &nbsp; / &nbsp; <a href="https://github.com/alpacachen/dsh-automation/issues">反馈问题</a>
+</p>
 
-[![npm version](https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm)](https://www.npmjs.com/package/@alpacachen/dsh-automation)
-![DeepSeek Harness Plugin](https://img.shields.io/badge/DeepSeek%20Harness-Plugin-7c5cff)
-[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
-[![CI](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml)
-![License](https://img.shields.io/badge/license-MIT-22c55e)
-
-**简体中文** · [English](README.md)
+<p>发布检查、依赖巡检、每日交接。<br>安排一次，让 Agent 按计划接手。</p>
 
 </div>
 
-## ✨ 核心能力
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🗓 按时开工</h3>
+      <p>单次或周期，跨时区安排。<br>日期、间隔和次数，可视化设置。</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>💬 接着上次聊</h3>
+      <p>默认新建会话，也可确认绑定<br>已有对话，延续工作区上下文。</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>🧩 配好再出发</h3>
+      <p>Agent、模型、技能按任务选择。<br>权限由你设定，变更需确认。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🔎 每次都有据可查</h3>
+      <p>摘要、耗时、错误一眼查看。<br>打开历史会话，回看执行过程。</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>📨 结果送到你手边</h3>
+      <p>可选接入 <a href="https://github.com/xmanrui/dsh-im">dsh-im</a>，投递到聊天工具。<br>侧边栏通知可选仅失败或每次完成。</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>⏸ 随时接手</h3>
+      <p>立即运行、暂停、恢复或停止。<br>可选连续失败 3 次后自动暂停。</p>
+    </td>
+  </tr>
+</table>
 
-- 🗣️ **自然语言创建**：告诉 Agent 做什么、什么时候做。
-- 🗓️ **可靠调度**：支持单次时间、RFC 5545 周期规则和 IANA 时区。
-- 🧼 **默认独立会话**：未选择已有会话时，每次运行创建新会话，不携带之前的聊天历史。
-- 👀 **过程可见**：结果摘要、耗时、错误、运行历史和会话入口集中展示。
-- 🛡️ **权限可控**：每个任务可选择 DSH Host 当前提供的任意权限预设。
-- 🤖 **执行可选**：可选定 Agent 预设、提供商/模型组合和有序技能。
-- 📌 **手动选择已有 Session**：在任务编辑页绑定同一工作区的已有会话，让后续运行继续同一段对话，而不是每次新建。
-- 🧭 **引导创建**：使用结果导向模板，或通过对话补齐必要信息。
-- 🎛️ **随时管理**：编辑、立即运行、暂停、恢复或删除任务。
-
-## 🚀 快速开始
-
-### 1. 安装
+## 开始使用
 
 ```sh
 dsh plugin --profile web add @alpacachen/dsh-automation
 ```
 
-### 2. 重启 DSH
+重启 `dsh web`，在工作区里发出第一条安排：
 
-重启 `dsh web`，让插件完成加载。
+> 每个工作日 18:00（Asia/Shanghai）整理今天的改动、待办和阻塞项。只读，不改文件。创建前先让我确认配置。
 
-### 3. 让 Agent 创建任务
+Agent 会预览计划、权限等配置，**你确认后才创建**。也可以在侧边栏「自动化任务」点「新建自动化」，从内置模板开始。
 
-> 明天上午 9 点（Asia/Shanghai）检查这个工作区是否还有发布阻塞，并创建一个单次自动化。
+计划有变，继续说「把每日交接改到晚上 7 点」；想发到聊天工具，在「编辑 → 消息投递」选好机器人和已保存目标即可。[设置消息投递 ↗](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.md)
 
-或者：
+> **保持 DSH 在线**，任务才能按计划执行。每次运行默认最多 1 小时，交互批准不会自动通过。[了解运行规则 →](docs/reference.zh.md)
 
-> 每个工作日下午 6 点整理今天的改动和待办。只报告，不要修改文件。
+## Demo
 
-创建后，在侧边栏打开 **「自动化任务」** 即可管理。
+复制一个例子给 Agent，按需改时间和范围。**所有任务都先预览配置、经你确认后创建**；没有明确指定的日志路径或其他必要信息，先补齐再创建。
 
-你可以随时点击**「新建自动化」**进入引导创建，也可以在空状态选择结果导向模板。创建前，Agent 会预览名称、计划与时区、工作区、Agent 预设、提供商/模型、已选技能、Host 权限、通知和失败暂停策略，并等待确认。
+<table>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>🌙 下班前，交接已经写好</h3>
+      <p><sub>周期任务 · 只读 · 每次完成通知</sub></p>
+      <blockquote>创建一个每个工作日 18:00（Asia/Shanghai）的每日交接任务。只读检查工作区当天的提交和未提交改动，输出已完成、待办、阻塞项，并注明依据；没有改动就如实说明。每次完成后通知我。</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>🚀 发布前，先过一遍清单</h3>
+      <p><sub>单次任务 · 有结论、有依据</sub></p>
+      <blockquote>创建一个明天 09:00（Asia/Shanghai）执行一次的发布检查。只读检查当前工作区的版本配置、发布文档和未提交改动，给出“可发布”或“存在阻塞”及依据；未验证的项单列，不要替我发布。</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>📦 周一，看看依赖该不该动</h3>
+      <p><sub>周期任务 · 模型 / 技能选择</sub></p>
+      <blockquote>创建一个每周一 09:30（Asia/Shanghai）的依赖巡检任务。先列出当前可用模型和技能供我选择。运行时检查依赖清单与锁文件，结合可访问的官方更新说明给出升级优先级、兼容风险和来源；只报告，不安装或升级。</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>💬 排障有后续，接着原来的线索查</h3>
+      <p><sub>固定会话 · 延续上下文</sub></p>
+      <blockquote>创建一个每个工作日 10:00（Asia/Shanghai）的排障跟进任务，绑定当前工作区中我们这次排障的会话。先展示目标会话让我确认。每次只读检查我指定的日志，结合已有结论列出新增证据和下一步，不重复输出整段历史。</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>📨 周五，把周报送到聊天工具</h3>
+      <p><sub>周期任务 · 可选 dsh-im 投递</sub></p>
+      <blockquote>创建一个每周五 17:00（Asia/Shanghai）的周报任务。只读整理工作区本周的提交和项目文档，输出适合发到聊天工具的简报：本周完成、遗留问题、下周建议。不要编造进展，缺少依据时明确说明。</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>📝 每月，让项目文档跟上代码</h3>
+      <p><sub>周期任务 · 受控文件修改</sub></p>
+      <blockquote>创建一个每月 1 日 10:00（Asia/Shanghai）的文档维护任务。核对 README 与当前 package.json 的命令，只更新 README 中已过时的命令说明，不改业务代码、不提交、不推送。创建前让我确认模型、技能及允许写入工作区的权限；完成后给出修改摘要。</blockquote>
+    </td>
+  </tr>
+</table>
 
-## 📌 手动选择已有 Session
+依赖巡检需要 Host 上有可用的联网工具。周报推送需先配置同 Host 的 dsh-im，再在任务的「编辑 → 消息投递」选择机器人和已保存目标并确认；创建任务本身不会开启投递。文档维护需要允许写入的权限。
 
-默认每次运行新建会话。也可在**「编辑 → 执行目标」**中手动选择同一工作区的已有 Session，确认后让后续任务沿用其上下文与 Agent／模型配置，并应用任务权限。此设置不开放给 Agent 修改；目标忙碌或不可用时失败，不新建替代会话。
+---
 
-## 📱 消息投递（可选）
-
-在**「编辑 → 消息投递」**中选择同 Host 的 [dsh-im](https://github.com/xmanrui/dsh-im) 机器人及已保存目标，确认后即可主动发送任务回复或失败报告，适合喝水提醒、每日简报等。**无需固定 Session，也无需开启双向同步**；未安装 dsh-im 不影响普通任务。目标配置见 [dsh-im 指南](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.md)。
-
-投递状态与任务结果分开记录：发送失败不会重跑任务，也不会自动重发；发送中重启会标为结果未知。因手动取消或关闭 Host 而中断的任务不触发报告。「平台已接受」不等于手机已收到；请保持机器人在线，并自行测试一次收件。
-
-## 🎛️ 管理与编辑
-
-任务卡支持：
-
-- 修改名称、执行提示词和计划；
-- 立即运行、暂停、恢复或恢复并运行；
-- 打开最近会话和历史运行；
-- 选择仅失败、每次完成或不显示侧边栏通知；
-- 选择保存的 Agent 预设、提供商/模型和有序技能，或跟随 Host 默认值；
-- 查看或修改 Host 提供的后续运行权限；实际权限变更必须再次确认；
-- 重试失败运行，并可在连续失败 3 次后自动暂停；
-- 删除未来计划，同时保留已有会话。
-
-![自动化任务列表、运行状态与快捷操作](docs/screenshots/automation-list.png)
-
-### 可视化周期编辑器
-
-常用周期无需手写 RRULE：
-
-| 设置 | 实际含义 |
-| --- | --- |
-| 每天 · 每隔 `1` 天 | 每天执行 |
-| 每周 · 每隔 `3` 周 · 周一至周五 | 每 3 周进入一次执行周，并在该周的周一至周五执行 |
-| 每月 · 每隔 `2` 个月 · 15 日 | 每 2 个月的 15 日执行 |
-
-还可以设置运行次数或结束日期。特殊规则可切换到 **「高级 RRULE」** 模式。
-
-![可视化周期编辑器](docs/screenshots/schedule-editor.png)
-
-## ⏱️ 运行方式
-
-```text
-计划到期 → 进入全局队列 → 新建或恢复固定持久化会话 → Agent 执行 → 记录结果与会话入口
-```
-
-- 所有自动化全局串行执行，不会互相重叠。
-- 每次运行默认最多一小时；可通过插件配置 `maxRunDurationMs` 调整。
-- 排队中或运行中的工作可以停止，且不会改变后续计划。
-- 意外重启时仍在执行的运行会标为**结果未知**，不会误报失败或自动重试。
-- 需要关注的结果会在侧边栏「自动化任务」入口显示持久化未读标记。
-- 成功运行会清零连续失败次数；任务可选择在连续失败或超时 3 次后自动暂停。
-- DSH 必须在计划到期时运行；重启后只补跑最近错过的一次。
-- 调度器遇到临时故障时会按有上限的指数退避自动重试。
-- 暂停期间的周期会被跳过；「恢复并运行」不会改变原计划。
-- 新建会话模式按已选技能名称加载其当前定义；固定会话模式沿用目标配置，不重复注入技能。执行所需配置不可用时直接失败，不会静默回退。
-- `approval: ask` 权限仍会请求批准；无人值守运行不会自动批准，可能一直等待到运行超时。
-- 状态版本保持为 1。旧任务只在内存中补齐新字段，启动时不会重写文件，并保留已有执行与权限设置。
-
-## 🗓️ 调度格式
-
-| 类型 | 参数 | 示例 |
-| --- | --- | --- |
-| 单次 | `once_at` | `2026-09-01T01:00:00.000Z` |
-| 周期 | `rrule` + `time_zone` + `start_at` | `FREQ=WEEKLY;BYDAY=MO,WE,FR` |
-
-- `once_at` 使用 RFC 3339 UTC 时间。
-- `rrule` 使用 RFC 5545 单行规则，不包含 `DTSTART`。
-- `time_zone` 使用 IANA 时区，例如 `Asia/Shanghai`。
-- `start_at` 使用本地时间格式 `YYYY-MM-DDTHH:mm:ss`。
-
-## 🧰 Agent 工具
-
-| 工具 | 用途 |
-| --- | --- |
-| `automation_options` | 查看当前 Host 的 Agent、模型、技能和权限选项 |
-| `automation_create` | 确认可选 `agent_preset`、`provider`/`model`、有序 `skills`、权限和策略后创建 |
-| `automation_update` | 设置或清除执行覆盖并替换技能；权限变更必须确认 |
-| `automation_list` | 查看任务与运行状态 |
-| `automation_run` | 立即运行一次，不改变原计划 |
-| `automation_pause` | 暂停未来调度 |
-| `automation_resume` | 恢复任务，可选择立即运行一次 |
-| `automation_delete` | 删除任务并取消未来调度 |
-
-## 💡 可以直接这样说
-
-> 「每周一上午 9:30 检查依赖是否有重要更新。」
-
-> 「把发布检查改到周五下午 4 点。」
-
-> 「恢复每日交接，并立即额外运行一次。」
-
-> 「列出所有自动化，并暂停依赖检查。」
-
-内置的发布准备、依赖巡检和每日交接模板都是可编辑草稿；选择模板不会自动发送。
-
-## 本地开发
-
-使用较新的 Node 22 LTS（ESLint 要求 22.13+）和 pnpm：
-
-```sh
-pnpm install --ignore-scripts
-pnpm --config.verify-deps-before-run=false lint
-pnpm --config.verify-deps-before-run=false check
-pnpm --config.verify-deps-before-run=false test
-node scripts/build-client.mjs
-```
-
-ESLint 检查生产代码与测试，禁止生产代码使用非空断言。
-Prettier 按指定文件使用，避免把全仓库格式化混入功能修改：
-
-```sh
-pnpm --config.verify-deps-before-run=false format src/path/to/changed-file.ts
-pnpm --config.verify-deps-before-run=false format:check src/path/to/changed-file.ts
-```
-
-格式化脚本需传入文件路径（或带引号的 glob）。统一配置保留单引号、不加分号，忽略构建产物和锁文件。
-
-## 开源许可
-
-MIT
+<p align="center">
+  <a href="docs/reference.zh.md">运行规则与工具参考</a> &nbsp; · &nbsp;
+  <a href="https://github.com/alpacachen/dsh-automation/issues">问题与建议</a> &nbsp; · &nbsp;
+  <a href="LICENSE">MIT License</a>
+</p>
