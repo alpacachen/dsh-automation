@@ -7,7 +7,6 @@ import { assertOverrideId, assertProviderModelPair, applyExecutionPatch, normali
 import type {
   AutomationRun,
   AutomationRunStatus,
-  AutomationSchedule,
   AutomationTask,
   AutomationTaskView,
   CreateAutomationRequest,
@@ -239,14 +238,14 @@ export class AutomationDomain {
       if (request.execution !== undefined) {
         task.execution = applyExecutionPatch(task.execution, request.execution)
       }
-      if (schedule !== undefined) {
+      if (schedule !== undefined && next !== undefined) {
         task.schedule = schedule
         if (task.status === 'paused') {
-          task.pausedNextRunAt = instant(next!)
+          task.pausedNextRunAt = instant(next)
           task.nextRunAt = null
         } else {
           task.status = 'active'
-          task.nextRunAt = instant(next!)
+          task.nextRunAt = instant(next)
           delete task.pausedAt
           delete task.pausedNextRunAt
         }

@@ -147,6 +147,28 @@ dsh plugin --profile web add @alpacachen/dsh-automation
 
 内置的发布准备、依赖巡检和每日交接模板都是可编辑草稿；选择模板不会自动发送。
 
+## 本地开发
+
+使用较新的 Node 22 LTS（ESLint 要求 22.13+）和 pnpm：
+
+```sh
+pnpm install --ignore-scripts
+pnpm --config.verify-deps-before-run=false lint
+pnpm --config.verify-deps-before-run=false check
+pnpm --config.verify-deps-before-run=false test
+node scripts/build-client.mjs
+```
+
+ESLint 检查生产代码与测试，禁止生产代码使用非空断言。
+Prettier 按指定文件使用，避免把全仓库格式化混入功能修改：
+
+```sh
+pnpm --config.verify-deps-before-run=false format src/path/to/changed-file.ts
+pnpm --config.verify-deps-before-run=false format:check src/path/to/changed-file.ts
+```
+
+格式化脚本需传入文件路径（或带引号的 glob）。统一配置保留单引号、不加分号，忽略构建产物和锁文件。
+
 ## 开源许可
 
 MIT

@@ -12,7 +12,6 @@ import {
   type StateDotState,
   type TagTone,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AutomationTaskView } from '../types.js'
 import { t as translate } from './i18n.js'
 
 /** Task/run status strings the API can return, mapped onto platform semantics. */

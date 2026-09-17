@@ -153,11 +153,11 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
           return
         }
         const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop|options))?$/.exec(suffix)
-        if (match === null) {
+        if (match?.[1] === undefined) {
           send(res, 404, { error: 'Automation API route not found.' })
           return
         }
-        const id = decodeURIComponent(match[1]!)
+        const id = decodeURIComponent(match[1])
         const action = match[2]
         if (req.method === 'GET' && action === 'options') {
           const candidate = url.searchParams.has('agentPreset') ? url.searchParams.get('agentPreset') || null : undefined

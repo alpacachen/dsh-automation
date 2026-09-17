@@ -86,7 +86,7 @@ export class AgentConfiguration {
     if (preset.broken !== undefined) throw new Error(`Agent preset ${preset.id} is unavailable: ${preset.broken}`)
     assertProviderModelPair(execution.provider, execution.model, { allowLegacyPartialModel: options.allowLegacyPartialModel === true })
     if (execution.provider !== undefined && execution.model !== undefined) {
-      await this.ctx.llm.resolveCallConfig({ provider: execution.provider, model: execution.model! })
+      await this.ctx.llm.resolveCallConfig({ provider: execution.provider, model: execution.model })
     }
     const scope = await this.ctx.agentPresets.standingKeyFor(execution.agentPreset)
     for (const name of execution.skills) {

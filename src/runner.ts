@@ -199,7 +199,7 @@ export class DshAutomationRunner implements AutomationRunner {
     if (pinned && run.sessionId !== undefined && run.sessionId !== target?.sessionId) {
       throw new AutomationError('target_resume_failed', 'run target snapshot does not match its session id.')
     }
-    const sessionId = SessionId(pinned ? target!.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
+    const sessionId = SessionId(target !== undefined ? target.sessionId : (run.sessionId ?? `automation-${randomUUID()}`))
     let handle: AgentHandle | undefined
     let agent: Agent | undefined
     let keepSessionLive = false
