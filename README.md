@@ -1,175 +1,129 @@
+<p align="center">
+  <img src="docs/images/automation-overview-en.png" alt="dsh-automation: natural-language schedules, session continuity, models and skills, permissions, message delivery, and failure protection" width="100%">
+</p>
+
 <div align="center">
 
-# dsh-automation
+<p>
+<strong>English</strong> · <a href="README.zh.md">简体中文</a>
+</p>
 
-### Schedule future Agent work in DSH with one sentence.
+<p>
+<a href="https://www.npmjs.com/package/@alpacachen/dsh-automation"><img alt="npm version" src="https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm"></a>
+<a href="https://awesome-dsh-plugin.com"><img alt="Awesome DSH Plugin" src="https://awesome-dsh-plugin.com/badge.svg"></a>
+<a href="https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
-Run one-time or recurring tasks. Runs use a fresh visible session by default, or a confirmed pinned persisted session with no fresh fallback.
+<p>
+<a href="#get-started">Get started</a> &nbsp; / &nbsp; <a href="#demo">Demo</a> &nbsp; / &nbsp; <a href="docs/reference.md">Reference</a> &nbsp; / &nbsp; <a href="https://github.com/alpacachen/dsh-automation/issues">Report an issue</a>
+</p>
 
-[![npm version](https://img.shields.io/npm/v/@alpacachen/dsh-automation?color=5b8def&label=npm)](https://www.npmjs.com/package/@alpacachen/dsh-automation)
-![DeepSeek Harness Plugin](https://img.shields.io/badge/DeepSeek%20Harness-Plugin-7c5cff)
-[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
-[![CI](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/alpacachen/dsh-automation/actions/workflows/ci.yml)
-![License](https://img.shields.io/badge/license-MIT-22c55e)
-
-[Simplified Chinese](README.zh.md) · **English**
+<p>Release checks. Dependency reviews. Daily handoffs.<br>Set the schedule. Let your Agent take it from there.</p>
 
 </div>
 
-## ✨ Highlights
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🗓 Work on a schedule</h3>
+      <p>One-time or recurring, across time zones.<br>Set dates, intervals, and limits visually.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>💬 Keep the conversation</h3>
+      <p>Start fresh by default, or confirm<br>an existing session to keep its context.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>🧩 Choose the capabilities</h3>
+      <p>Pick an Agent, model, and skills per task.<br>You set permissions and confirm changes.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🔎 Follow every run</h3>
+      <p>See summaries, duration, and errors.<br>Open past sessions to review the work.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>📨 Bring results to chat</h3>
+      <p>Optionally deliver through <a href="https://github.com/xmanrui/dsh-im">dsh-im</a>.<br>Sidebar alerts for failures or every run.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>⏸ Stay in control</h3>
+      <p>Run now, pause, resume, or stop.<br>Optionally auto-pause after 3 failures.</p>
+    </td>
+  </tr>
+</table>
 
-- 🗣️ **Create naturally** — tell an Agent what to do and when.
-- 🗓️ **Schedule precisely** — one-time instants, RFC 5545 recurrence, and IANA time zones.
-- 🧼 **Start fresh by default** — each run starts a new session unless an existing session is selected.
-- 👀 **Stay informed** — see result summaries, duration, errors, history, and session links in one place.
-- 🛡️ **Limit access** — choose any permission preset advertised by the DSH Host for each task.
-- 🤖 **Choose execution** — optionally pin an Agent preset, provider/model pair, and ordered skills.
-- 📌 **Manually select an existing Session** — bind a task to a conversation in the same workspace so future runs continue there instead of creating new sessions.
-- 🧭 **Start with guidance** — use outcome-focused templates or a guided creation conversation.
-- 🎛️ **Stay in control** — edit, run, pause, resume, or delete tasks from the UI.
-
-## 🚀 Quick start
-
-### 1. Install
+## Get started
 
 ```sh
 dsh plugin --profile web add @alpacachen/dsh-automation
 ```
 
-### 2. Restart DSH
+Restart `dsh web`, open a workspace, and make your first request:
 
-Restart `dsh web` so the plugin can load.
+> Every weekday at 6 PM in Asia/Shanghai, summarize today's changes, next actions, and blockers. Read only; don't change files. Show me the configuration before creating it.
 
-### 3. Ask an Agent
+The Agent previews the schedule, permissions, and other settings. **It creates the task only after you confirm.** Or choose New automation in the sidebar and start from a built-in template.
 
-> Tomorrow at 9:00 AM in Asia/Shanghai, review this workspace for release blockers and create a one-time automation.
+Plans change: just say “Move the daily handoff to 7 PM.” To receive results in chat, select a bot and saved target under Edit → Message delivery. [Set up message delivery ↗](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.en.md)
 
-Or:
+> **Keep DSH running** for scheduled tasks. Runs have a 1-hour limit by default, and interactive approvals are never granted automatically. [How execution works →](docs/reference.md)
 
-> Every weekday at 6:00 PM, summarize today's changes and open work. Report only; do not modify files.
+## Demo
 
-After creation, open **Automations** in the sidebar to manage the task.
+Copy an example to your Agent and adjust the time or scope. **Every task requires a configuration preview and your confirmation before creation.** Fill in missing essentials, such as log paths, before saving the task.
 
-Use **New automation** at any time for a guided setup, or choose a result-focused template in the empty state. Before creation, the Agent previews the name, schedule and time zone, workspace, Agent preset, provider/model, selected skills, exact Host permission, notifications, and failure-pause policy, then waits for confirmation.
+<table>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>🌙 A handoff before you log off</h3>
+      <p><sub>Recurring · Read only · Notify after each run</sub></p>
+      <blockquote>Create a daily handoff for weekdays at 18:00 in Asia/Shanghai. Read today's commits and uncommitted workspace changes. Report completed work, next actions, and blockers with evidence; say so if nothing changed. Do not modify files. Notify me after each run.</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>🚀 A check before the release</h3>
+      <p><sub>One-time · A verdict with evidence</sub></p>
+      <blockquote>Create a one-time release check for tomorrow at 09:00 in Asia/Shanghai. Read the workspace's version configuration, release docs, and uncommitted changes. Report Ready or Blocked with evidence, and list anything not verified. Do not modify files or publish anything.</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>📦 A Monday dependency review</h3>
+      <p><sub>Recurring · Choose models and skills</sub></p>
+      <blockquote>Create a dependency review for Mondays at 09:30 in Asia/Shanghai. First list the available models and skills for me to choose. Inspect manifests and lockfiles, consult accessible official release notes, and report upgrade priorities, compatibility risks, and sources. Do not install or upgrade anything.</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>💬 Keep an investigation moving</h3>
+      <p><sub>Pinned session · Retain context</sub></p>
+      <blockquote>Create an investigation follow-up for weekdays at 10:00 in Asia/Shanghai, pinned to our investigation session in this workspace. Show me the target session for confirmation first. Read the logs I specify, build on our existing conclusions, and report new evidence and next steps. Do not repeat the entire history or modify files.</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>📨 A weekly report delivered to chat</h3>
+      <p><sub>Recurring · Optional dsh-im delivery</sub></p>
+      <blockquote>Create a weekly report for Fridays at 17:00 in Asia/Shanghai. Read this week's workspace commits and project docs. Produce a short chat-ready briefing: completed work, unresolved issues, and suggested next steps. Do not modify files or invent progress; flag missing evidence.</blockquote>
+    </td>
+  </tr>
+  <tr>
+    <td width="100%" valign="top">
+      <h3>📝 Keep project docs up to date</h3>
+      <p><sub>Recurring · Controlled file changes</sub></p>
+      <blockquote>Create a docs-maintenance task for the first day of each month at 10:00 in Asia/Shanghai. Check README commands against the current package.json and update only outdated command instructions. Do not change application code, commit, or push. Let me confirm the model, skills, and workspace-write permissions before creation. Summarize the edits after each run.</blockquote>
+    </td>
+  </tr>
+</table>
 
-## 📌 Manually select an existing Session
+Dependency reviews need working web tools on the Host. For report delivery, configure dsh-im on the same Host, then select and confirm a bot and saved target under Edit → Message delivery; creating the task alone does not enable delivery. Docs maintenance requires write permissions.
 
-Runs create fresh sessions by default. In **Edit → Execution destination**, you can manually select and confirm an existing Session in the same workspace. Future runs retain its context and Agent/model configuration while applying the task's permissions. Agents cannot change this setting; a busy or unavailable target fails without creating a replacement.
+---
 
-## 📱 Message delivery (optional)
-
-In **Edit → Message delivery**, choose a [dsh-im](https://github.com/xmanrui/dsh-im) bot on the same Host and a saved target, then confirm to send task replies or failure reports directly—useful for reminders and daily briefings. **No pinned Session or two-way sync is required**; ordinary tasks work without dsh-im installed. See the [dsh-im guide](https://github.com/xmanrui/dsh-im/blob/main/PROACTIVE_DELIVERY.en.md) to configure targets.
-
-Delivery status is recorded separately from task results. Failed sends never rerun the task or automatically resend; an in-flight send interrupted by restart becomes unknown. Runs canceled manually or interrupted by Host shutdown do not trigger reports. “Platform accepted” does not guarantee phone receipt; keep the bot online and test delivery yourself.
-
-## 🎛️ Manage and edit
-
-Each task card lets you:
-
-- change the name, prompt, or schedule;
-- run now, pause, resume, or resume and run;
-- open the latest session or any recent run;
-- choose failure-only, every-completion, or no sidebar notifications;
-- choose a saved Agent preset, provider/model pair, and ordered skills, or follow Host defaults;
-- see or change any Host permission preset for future runs; actual permission changes require confirmation;
-- retry failed runs and optionally pause after three consecutive failures;
-- delete future scheduling while keeping existing sessions.
-
-![Automation task list, run state, and quick actions](docs/screenshots/automation-list.png)
-
-### Visual recurrence editor
-
-Common schedules do not require writing RRULE by hand:
-
-| Settings | Meaning |
-| --- | --- |
-| Daily · every `1` day | Run every day |
-| Weekly · every `3` weeks · Monday–Friday | Every third week, run Monday through Friday |
-| Monthly · every `2` months · day 15 | Run on day 15 every two months |
-
-You can also stop after a number of runs or on a date. Use **Advanced RRULE** for uncommon rules.
-
-![Visual recurrence editor](docs/screenshots/schedule-editor.png)
-
-## ⏱️ How runs work
-
-```text
-Schedule due → Global queue → Fresh or pinned persisted session → Agent runs → Result and session link recorded
-```
-
-- Automations run globally one at a time and never overlap.
-- Runs time out after one hour by default; set `maxRunDurationMs` in plugin config to change the limit.
-- Queued or running work can be stopped without moving its future schedule.
-- A run active during an unexpected restart is marked **outcome unknown** instead of being reported as failed or retried.
-- Notification-worthy results add a persistent unread badge to the Automations sidebar action.
-- Successful runs clear the consecutive-failure count; tasks can optionally auto-pause after three failures or timeouts.
-- DSH must be running when work is due; after restart, only the latest missed occurrence runs.
-- Transient scheduler failures retry automatically with bounded exponential backoff.
-- Paused occurrences are skipped; **Resume & run** does not move the original schedule.
-- Fresh-session runs load the current definitions of selected skills; pinned-session runs keep the target's existing configuration without reinjecting them. Required execution settings that are unavailable fail the run instead of falling back.
-- Permission presets with `approval: ask` remain interactive: unattended runs never auto-approve and may wait until the run timeout.
-- Existing state stays at version 1. Older tasks are normalized in memory without a startup rewrite and retain their saved execution and permission settings.
-
-## 🗓️ Schedule formats
-
-| Type | Parameters | Example |
-| --- | --- | --- |
-| One-time | `once_at` | `2026-09-01T01:00:00.000Z` |
-| Recurring | `rrule` + `time_zone` + `start_at` | `FREQ=WEEKLY;BYDAY=MO,WE,FR` |
-
-- `once_at` is an RFC 3339 UTC instant.
-- `rrule` is one RFC 5545 rule without `DTSTART`.
-- `time_zone` is an IANA zone such as `Asia/Shanghai`.
-- `start_at` is local wall-clock time in `YYYY-MM-DDTHH:mm:ss` form.
-
-## 🧰 Agent tools
-
-| Tool | Purpose |
-| --- | --- |
-| `automation_options` | List current Host Agent, model, skill, and permission options |
-| `automation_create` | Create after confirming optional `agent_preset`, `provider`/`model`, ordered `skills`, permission, and policies |
-| `automation_update` | Set or clear execution overrides and replace skills; permission changes require confirmation |
-| `automation_list` | List tasks and current run state |
-| `automation_run` | Queue one immediate run without changing the schedule |
-| `automation_pause` | Pause future scheduling |
-| `automation_resume` | Resume, optionally with one immediate run |
-| `automation_delete` | Delete the task and cancel future scheduling |
-
-## 💡 Example requests
-
-> “Every Monday at 9:30 AM, check dependencies for important updates.”
-
-> “Move the release check to Friday at 4:00 PM.”
-
-> “Resume the daily handoff and run it once now.”
-
-> “List all automations and pause the dependency check.”
-
-The built-in release readiness, dependency watch, and daily handoff templates remain editable drafts; selecting one never sends it automatically.
-
-## Development
-
-Use a current Node 22 LTS release (22.13+ for ESLint) and pnpm:
-
-```sh
-pnpm install --ignore-scripts
-pnpm --config.verify-deps-before-run=false lint
-pnpm --config.verify-deps-before-run=false check
-pnpm --config.verify-deps-before-run=false test
-node scripts/build-client.mjs
-```
-
-ESLint checks production code and tests; production code must not use non-null assertions.
-Prettier is opt-in per file to avoid mixing repository-wide formatting with functional changes:
-
-```sh
-pnpm --config.verify-deps-before-run=false format src/path/to/changed-file.ts
-pnpm --config.verify-deps-before-run=false format:check src/path/to/changed-file.ts
-```
-
-Pass explicit paths (or quoted globs) to the formatting scripts. The shared configuration preserves
-single quotes and omits semicolons; generated output and the lockfile are ignored.
-
-## License
-
-MIT
+<p align="center">
+  <a href="docs/reference.md">Execution rules &amp; tool reference</a> &nbsp; · &nbsp;
+  <a href="https://github.com/alpacachen/dsh-automation/issues">Feedback &amp; ideas</a> &nbsp; · &nbsp;
+  <a href="LICENSE">MIT License</a>
+</p>
