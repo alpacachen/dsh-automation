@@ -4,7 +4,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only augmentation: renderer declares ctx.slots without adding a require() call to lib/client.js.
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { IconAlarmClockOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconClockOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { installLocale, t as translate, useLocale } from './i18n.js'
 import { AutomationPanel } from './AutomationPanel.js'
 import {
@@ -14,6 +14,7 @@ import {
   resetStore,
   setPanelOpen,
   useAutomations,
+  usePanelOpen,
   useDraftRevision,
 } from './store.js'
 import styles from './styles.css'
@@ -51,18 +52,21 @@ function DraftInjector({ sessionId, inputActions }: InputDockProps) {
 function AutomationButton({ wide }: { wide: boolean }) {
   const { t } = useLocale()
   const { unread } = useAutomations()
+  const open = usePanelOpen()
   return (
     <button
       type="button"
       className={`am-nav ${wide ? 'is-wide' : 'is-rail'}`}
       aria-label={unread > 0 ? `${t('openAutomations')}. ${t('unreadNotifications', { count: unread })}` : t('openAutomations')}
       title={t('automations')}
+      aria-haspopup="dialog"
+      aria-expanded={open}
       onClick={() => {
         setPanelOpen(true)
         void request('/notifications/read', { method: 'POST' }).then(clearUnread).catch(() => undefined)
       }}
     >
-      <span className="am-nav-icon"><IconAlarmClockOutline16 /></span>
+      <span className="am-nav-icon"><IconClockOutline16 size={wide ? 16 : 18} /></span>
       {wide && <span className="am-nav-label">{t('automations')}</span>}
       {unread > 0 && <span className="am-nav-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span>}
     </button>

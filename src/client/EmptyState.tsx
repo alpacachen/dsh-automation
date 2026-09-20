@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconAlarmClockOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAlarmClockOutline16, IconRightUpOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { t as translate } from './i18n.js'
 import { IconCalendar, IconShield } from './shared.js'
 
@@ -35,6 +35,7 @@ export function EmptyState({ t, creating, disabled, onStart }: {
               <strong>{example.title}</strong>
               <span>{creating === example.id ? t('creatingConversation') : example.description}</span>
             </span>
+            <IconRightUpOutline14 className="am-example-arrow" />
           </button>
         ))}
       </div>

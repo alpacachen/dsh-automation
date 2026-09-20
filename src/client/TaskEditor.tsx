@@ -2,6 +2,7 @@ import React from 'react'
 import {
   Button,
   Input,
+  IconQuestionOutline14,
   IconSearchOutline16,
   Switch,
   Tag,
@@ -270,7 +271,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
 
         <Section title={t('sectionBasics')}>
           <Field full label={t('nameLabel')} htmlFor="am-name">
-            <input id="am-name" className="am-input" required disabled={saving} value={name} onChange={(event) => setName(event.target.value)} />
+            <Input id="am-name" className="am-input" required disabled={saving} value={name} onChange={(event) => setName(event.target.value)} />
           </Field>
           <Field full label={t('promptLabel')} htmlFor="am-prompt">
             <textarea id="am-prompt" className="am-textarea" required rows={6} disabled={saving} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
@@ -388,7 +389,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
           <Tooltip label={t('deliveryHelpText')} side="bottom" maxWidth={320}>
             <button type="button" className="am-icon-button am-help-button" aria-label={t('deliveryHelp')} aria-description={t('deliveryHelpText')}
               onClick={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.focus() }}>
-              ?
+              <IconQuestionOutline14 />
             </button>
           </Tooltip>
         </>}>
