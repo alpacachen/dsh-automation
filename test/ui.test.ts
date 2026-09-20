@@ -35,14 +35,31 @@ test('stylesheet themes entirely through DSH tokens', async () => {
   assert.match(css, /prefers-reduced-motion/)
 })
 
-test('typography uses one host family and a restrained two-role scale', async () => {
+test('custom typography follows Host roles without restyling primitive descendants', async () => {
   const css = await readFile(cssUrl, 'utf8')
   assert.doesNotMatch(css, /Avenir|letter-spacing|font-weight:\s*(600|700|bold)|--dsw-font-.*strong/)
-  assert.doesNotMatch(css, /font-size:\s*(11|12|14|20|22|26)px/)
-  assert.match(css, /--dsw-font-base-16/)
-  assert.match(css, /--dsw-font-xs-13/)
-  // The sidebar entry keeps the host navigation's 14px; the panel does not.
-  assert.equal((css.match(/--dsw-font-s-14/g) ?? []).length, 1)
+  assert.match(css, /\.am-panel\s*\{[^}]*font:\s*var\(--dsw-font-xs-13\)/)
+  assert.match(css, /\.am-header-title\s*\{[^}]*font:\s*var\(--dsw-font-base-16\)[^}]*font-weight:\s*500/)
+  assert.match(css, /\.am-textarea,\s*\.am-select\s*\{[^}]*font:\s*var\(--dsw-font-s-14\)/)
+  assert.match(css, /\.am-panel code\s*\{[^}]*font-family:\s*var\(--ds-font-family-code\)/)
+  // Button, Input, Pill and Menu actual computed baselines are exercised by
+  // test-ui-browser.mjs; a global reset must not silently flatten them again.
+  assert.doesNotMatch(css, /\.am-panel\.am-panel/)
+  assert.doesNotMatch(css, /\.am-panel\s+(?:button|input|textarea|select|:is\(button)[^{]*\{[^}]*font(?:-size|-weight)?:/)
+})
+
+test('focus rules target custom controls, not official Input inner elements', async () => {
+  const css = await readFile(cssUrl, 'utf8')
+  const selectors = [...css.matchAll(/([^{}]+):focus-visible\s*\{/g)].map((match) => {
+    assert.ok(match[1])
+    return match[1]
+  })
+  assert.ok(selectors.length > 0)
+  assert.ok(selectors.some((selector) => selector.includes('.am-nav')))
+  assert.ok(selectors.some((selector) => selector.includes('.am-select')))
+  for (const selector of selectors) {
+    assert.doesNotMatch(selector, /(?:^|[\s,(])(?:button|input|textarea|select)(?=[\s,):]|$)|\[tabindex\]/)
+  }
 })
 
 test('overlay is an accessible, dismissible dialog', async () => {

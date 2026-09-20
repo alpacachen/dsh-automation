@@ -1,4 +1,5 @@
 import React from 'react'
+import { IconChevronRightOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /** One labelled form row. */
 export function Field({ label, children, full, hint, htmlFor }: {
@@ -31,7 +32,10 @@ export function Section({ title, children }: { title: string; children: React.Re
 export function Disclosure({ title, children }: { title: React.ReactNode; children: React.ReactNode }) {
   return (
     <details className="am-editor-disclosure">
-      <summary className="am-form-section-title">{title}</summary>
+      <summary className="am-form-section-title">
+        <IconChevronRightOutline14 className="am-disclosure-chevron" />
+        <span>{title}</span>
+      </summary>
       <div className="am-form-grid">{children}</div>
     </details>
   )

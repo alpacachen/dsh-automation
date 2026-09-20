@@ -1,5 +1,5 @@
 import React from 'react'
-import { Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Input, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AutomationTaskView } from '../types.js'
 import { t as translate } from './i18n.js'
 import { buildCommonRRule, defaultCommonRRule, parseCommonRRule, WEEKDAYS, type CommonRRule, type Weekday } from './rrule-editor.js'
@@ -97,7 +97,7 @@ export function ScheduleSection({ schedule, saving, t }: {
       </Field>
       {kind === 'once' ? (
         <Field label={t('runAt')} htmlFor="am-once">
-          <input id="am-once" className="am-input" required type="datetime-local" step="1" disabled={saving} value={onceAt} onChange={(event) => setOnceAt(event.target.value)} />
+          <Input id="am-once" className="am-input" required type="datetime-local" step="1" disabled={saving} value={onceAt} onChange={(event) => setOnceAt(event.target.value)} />
         </Field>
       ) : (
         <>
@@ -131,7 +131,7 @@ export function ScheduleSection({ schedule, saving, t }: {
             </div>
             {advancedRule ? (
               <div className="am-rule-advanced">
-                <input className="am-input" aria-label={t('recurrenceRule')} required disabled={saving} value={rrule} placeholder="FREQ=WEEKLY;BYDAY=MO" onChange={(event) => setRrule(event.target.value)} />
+                <Input className="am-input" aria-label={t('recurrenceRule')} required disabled={saving} value={rrule} placeholder="FREQ=WEEKLY;BYDAY=MO" onChange={(event) => setRrule(event.target.value)} />
                 <small className="am-field-hint">{parsedRawRule === undefined ? t('unsupportedRuleHint') : t('advancedRuleHint')}</small>
               </div>
             ) : (
@@ -151,8 +151,8 @@ export function ScheduleSection({ schedule, saving, t }: {
                 </Field>
                 <Field label={t('repeatEvery')} htmlFor="am-interval">
                   <span className="am-interval">
-                    <input id="am-interval" className="am-input" required type="number" min="1" step="1" disabled={saving} value={commonRule.interval} onChange={(event) => setCommonRule({ ...commonRule, interval: event.target.value })} />
-                    <b>{t(INTERVAL_UNIT_KEYS[commonRule.frequency])}</b>
+                    <Input id="am-interval" className="am-input" required type="number" min="1" step="1" disabled={saving} value={commonRule.interval} onChange={(event) => setCommonRule({ ...commonRule, interval: event.target.value })} />
+                    <span>{t(INTERVAL_UNIT_KEYS[commonRule.frequency])}</span>
                   </span>
                 </Field>
                 {commonRule.frequency === 'WEEKLY' && (
@@ -184,7 +184,7 @@ export function ScheduleSection({ schedule, saving, t }: {
                 )}
                 {commonRule.frequency === 'MONTHLY' && (
                   <Field label={t('monthlyOnDay')} htmlFor="am-monthday">
-                    <input id="am-monthday" className="am-input" required type="number" min="1" max="31" step="1" disabled={saving} value={commonRule.monthDay} onChange={(event) => setCommonRule({ ...commonRule, monthDay: event.target.value })} />
+                    <Input id="am-monthday" className="am-input" required type="number" min="1" max="31" step="1" disabled={saving} value={commonRule.monthDay} onChange={(event) => setCommonRule({ ...commonRule, monthDay: event.target.value })} />
                   </Field>
                 )}
                 <Field label={t('ends')}>
@@ -202,22 +202,22 @@ export function ScheduleSection({ schedule, saving, t }: {
                 </Field>
                 {commonRule.end === 'count' && (
                   <Field label={t('occurrences')} htmlFor="am-count">
-                    <input id="am-count" className="am-input" required type="number" min="1" step="1" disabled={saving} value={commonRule.count} onChange={(event) => setCommonRule({ ...commonRule, count: event.target.value })} />
+                    <Input id="am-count" className="am-input" required type="number" min="1" step="1" disabled={saving} value={commonRule.count} onChange={(event) => setCommonRule({ ...commonRule, count: event.target.value })} />
                   </Field>
                 )}
                 {commonRule.end === 'until' && (
                   <Field label={t('endDate')} htmlFor="am-until">
-                    <input id="am-until" className="am-input" required type="date" disabled={saving} value={commonRule.until} onChange={(event) => setCommonRule({ ...commonRule, until: event.target.value })} />
+                    <Input id="am-until" className="am-input" required type="date" disabled={saving} value={commonRule.until} onChange={(event) => setCommonRule({ ...commonRule, until: event.target.value })} />
                   </Field>
                 )}
               </div>
             )}
           </div>
           <Field label={t('timeZone')} htmlFor="am-tz">
-            <input id="am-tz" className="am-input" required disabled={saving} value={timeZone} placeholder="Asia/Shanghai" onChange={(event) => setTimeZone(event.target.value)} />
+            <Input id="am-tz" className="am-input" required disabled={saving} value={timeZone} placeholder="Asia/Shanghai" onChange={(event) => setTimeZone(event.target.value)} />
           </Field>
           <Field label={t('startsAt')} htmlFor="am-start">
-            <input id="am-start" className="am-input" required type="datetime-local" step="1" disabled={saving} value={startAt} onChange={(event) => setStartAt(event.target.value)} />
+            <Input id="am-start" className="am-input" required type="datetime-local" step="1" disabled={saving} value={startAt} onChange={(event) => setStartAt(event.target.value)} />
           </Field>
         </>
       )}

@@ -53,7 +53,7 @@ const options = { presets: [], models: [], modelFailures: [], skills: [], permis
 ] }
 
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, colorScheme: 'light' })
   page.on('pageerror', (error) => errors.push(error.message))
   if (process.env.DSH_TEST_COOKIE) {
     const [name, ...value] = process.env.DSH_TEST_COOKIE.split('=')
@@ -128,6 +128,8 @@ try {
     const sheets = [...themeSource.matchAll(/var (\w+_css_default) = ("(?:[^"\\]|\\.)*");/g)].map((match) => JSON.parse(match[2]))
     assert.ok(sheets.length >= 6, 'Expected the actual host theme sheets')
     await page.addStyleTag({ content: sheets.join('\n') })
+    // Start the isolated fixture in light mode regardless of the Host boot preference.
+    await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
     // If Automation is now installed, a host combo batch can already contain
     // its factory. Finish that transport before replacing it with this build.
     await page.evaluate(async () => {
@@ -188,37 +190,152 @@ try {
       sessionSnapshot = { current: 'fixture-current', phase: 'ready', ids: sessionRows.map((row) => row.id), byId: Object.fromEntries(sessionRows.map((row) => [row.id, row])) }
       const subscribeSessions = (listener) => { sessionListeners.add(listener); return () => sessionListeners.delete(listener) }
       const getSessions = () => sessionSnapshot
+      function SidebarFixture() {
+        const [wide, setWide] = React.useState(true)
+        window.__automationSetSidebarWide = setWide
+        return React.createElement('div', { id: 'fixture-sidebar', style: { width: wide ? 228 : 36 } },
+          React.createElement(components.automation, { wide }))
+      }
       ReactDOM.createRoot(root).render(React.createElement(React.Fragment, null,
-        React.createElement(components.automation, { wide: true }),
+        React.createElement(SidebarFixture),
         React.createElement(components['automation-panel'], {
           useSessions: (select) => select(React.useSyncExternalStore(subscribeSessions, getSessions, getSessions)),
           useWorkspaces: (select) => select({ archivedSessionIds: ['fixture-archived'], items: [{ workspaceId: 'fixture-workspace', sessionIds: ['fixture-current', 'fixture-target', 'fixture-fork', 'fixture-busy', 'fixture-child', 'fixture-archived'] }] }),
         }),
       ))
     })
+    await page.locator('.am-nav').waitFor()
+    await assertSidebar()
     await page.getByRole('button', { name: 'Open Automations', exact: true }).click()
     await page.locator('.am-panel').waitFor()
+  }
+  const assertCustomFocus = async (locator) => {
+    await page.keyboard.press('Tab')
+    await locator.focus()
+    const focus = await locator.evaluate((el) => {
+      const css = getComputedStyle(el)
+      return { visible: el.matches(':focus-visible'), style: css.outlineStyle, width: css.outlineWidth }
+    })
+    assert.deepEqual(focus, { visible: true, style: 'solid', width: '2px' }, 'Custom controls retain visible keyboard focus')
+  }
+  const assertSidebar = async () => {
+    for (const wide of [true, false]) {
+      await page.evaluate((wide) => window.__automationSetSidebarWide(wide), wide)
+      const nav = page.locator(`.am-nav.${wide ? 'is-wide' : 'is-rail'}`)
+      await nav.waitFor()
+      const geometry = await nav.evaluate((el) => {
+        const css = getComputedStyle(el)
+        const box = el.getBoundingClientRect()
+        const parent = el.parentElement.getBoundingClientRect()
+        const icon = el.querySelector('.am-nav-icon').getBoundingClientRect()
+        const svg = el.querySelector('svg').getBoundingClientRect()
+        const probe = document.createElement('span')
+        probe.style.color = 'var(--dsw-alias-label-primary)'
+        el.append(probe)
+        const primary = getComputedStyle(probe).color
+        probe.remove()
+        return { width: box.width, height: box.height, x: box.x - parent.x, parentWidth: parent.width,
+          radius: css.borderRadius, margin: css.margin, color: css.color, primary,
+          icon: [icon.width, icon.height], svg: [svg.width, svg.height],
+          centered: Math.abs(svg.x + svg.width / 2 - icon.x - icon.width / 2) < 0.5 &&
+            Math.abs(svg.y + svg.height / 2 - icon.y - icon.height / 2) < 0.5 }
+      })
+      assert.equal(geometry.height, wide ? 42 : 36)
+      assert.equal(geometry.width, wide ? geometry.parentWidth : 36)
+      assert.equal(geometry.x, 0)
+      assert.equal(geometry.radius, wide ? '12px' : '50%')
+      assert.equal(geometry.margin, wide ? '0px' : '8px 0px 10px')
+      assert.equal(geometry.color, geometry.primary)
+      assert.deepEqual(geometry.icon, wide ? [16, 16] : [18, 18])
+      assert.deepEqual(geometry.svg, wide ? [16, 16] : [18, 18])
+      assert.equal(geometry.centered, true, 'Host clock matches the Settings icon size without extra scaling')
+      assert.equal(await nav.locator('.am-nav-label').count(), wide ? 1 : 0)
+      await assertCustomFocus(nav)
+      await nav.screenshot({ path: `${output}/sidebar-${wide ? 'wide' : 'rail'}.png` })
+    }
+    await page.evaluate(() => window.__automationSetSidebarWide(true))
+    await page.locator('.am-nav.is-wide').waitFor()
+  }
+  const assertHeaderActions = async () => {
+    const edit = await page.getByRole('button', { name: 'Edit', exact: true }).boundingBox()
+    const more = page.getByRole('button', { name: 'More actions', exact: true })
+    const box = await more.boundingBox()
+    assert.equal(edit.height, 28)
+    assert.equal(box.height, 28)
+    assert.ok(Math.abs(edit.y + edit.height / 2 - box.y - box.height / 2) < 0.5, 'Edit and More action centers align')
+    assert.equal(await more.evaluate((el) => getComputedStyle(el).borderRadius), '8px')
   }
   const assertTypography = async () => {
     const violations = await page.locator('.am-panel').evaluate((panel) => {
       const family = getComputedStyle(panel).fontFamily
-      return [...panel.querySelectorAll('*')].filter((el) => el instanceof HTMLElement && el.getClientRects().length &&
-        ([...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) || el.matches('input,textarea')))
-        .flatMap((el) => {
-          const css = getComputedStyle(el)
-          const heading = el.matches('h2,h3')
-          const expectedSize = heading ? '16px' : '13px'
-          const expectedWeight = heading ? '500' : '400'
-          return css.fontSize !== expectedSize || css.fontWeight !== expectedWeight || (!el.matches('code') && css.fontFamily !== family)
-            ? [{ text: el.textContent.trim().slice(0,30), tag: el.tagName, class: el.className, size: css.fontSize, weight: css.fontWeight, family: css.fontFamily }] : []
-        })
+      const probe = document.createElement('code')
+      probe.style.fontFamily = 'var(--ds-font-family-code)'
+      document.body.append(probe)
+      const codeFamily = getComputedStyle(probe).fontFamily
+      probe.remove()
+      const violations = []
+      const check = (el, expected) => {
+        const css = getComputedStyle(el)
+        const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, css[key]]))
+        if (Object.keys(expected).some((key) => actual[key] !== expected[key])) {
+          violations.push({ text: el.textContent.trim().slice(0, 40), tag: el.tagName, class: el.className, expected, actual })
+        }
+      }
+      const visible = (el) => el instanceof HTMLElement && el.getClientRects().length
+      const text = (el) => [...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim())
+      for (const el of panel.querySelectorAll('*')) {
+        if (visible(el) && (text(el) || el.matches('input,textarea'))) {
+          check(el, { fontFamily: el.closest('code') ? codeFamily : family })
+        }
+      }
+      // Assert actual component baselines, not a permissive list of font sizes.
+      check(panel, { fontSize: '13px', lineHeight: '20px', fontWeight: '400' })
+      for (const [selector, fontSize, lineHeight, fontWeight = '400'] of [
+        ['h2,h3', '16px', '24px', '500'],
+        ['.am-row-name,.am-row-meta,.am-field-label,.am-fact-label,.am-fact-value,.am-form-section-title,.am-interval > span:not(.am-input)', '13px', '20px'],
+        ['input,textarea,.am-select,.am-select-value', '14px', '22px'],
+        ['.am-tab', '13px', '20px', '500'],
+        ['code', '13px', '20px'],
+      ]) {
+        for (const el of panel.querySelectorAll(selector)) {
+          if (visible(el)) check(el, { fontSize, lineHeight, fontWeight })
+        }
+      }
+      // Real Host Button(sm) and Pill labels (including nested spans) must keep
+      // 12/18. Exclude custom controls and icon-only DisclosureRow/Switch buttons.
+      for (const button of panel.querySelectorAll('button:not([class*="am-"]):not([role="switch"])')) {
+        if (!visible(button) || !button.textContent.trim()) continue
+        for (const el of [button, ...button.querySelectorAll('span,strong,b,small')]) {
+          if (visible(el)) check(el, { fontSize: '12px', lineHeight: '18px', fontWeight: '400' })
+        }
+      }
+      // Host menus are portaled outside the panel; check them when opened too.
+      for (const item of document.querySelectorAll('[role="menuitem"]')) {
+        for (const el of [item, ...item.querySelectorAll('span')]) {
+          if (visible(el)) check(el, { fontSize: '14px', lineHeight: '22px', fontWeight: '400', fontFamily: family })
+        }
+      }
+      return violations
     })
-    assert.deepEqual(violations, [], 'Typography must stay on the two-role host type system')
+    assert.deepEqual(violations, [], 'Custom type roles and real Host primitive baselines must remain intact')
   }
   await mount()
   await page.locator('.am-row').first().waitFor()
   assert.equal(await page.locator('.am-row').count(), 4)
-  await page.locator('.am-row').first().focus()
+  const search = page.getByRole('textbox', { name: 'Search automations' })
+  await page.keyboard.press('Tab')
+  await search.focus()
+  assert.deepEqual(await search.evaluate((el) => {
+    const css = getComputedStyle(el)
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--dsw-alias-brand-primary)'
+    el.parentElement.append(probe)
+    const focusedBorder = getComputedStyle(el.parentElement).borderColor === getComputedStyle(probe).color
+    probe.remove()
+    return { visible: el.matches(':focus-visible'), outline: css.outlineStyle, shadow: css.boxShadow, focusedBorder }
+  }), { visible: true, outline: 'none', shadow: 'none', focusedBorder: true }, 'Official Input uses its wrapper border, never an extra inner ring')
+  await assertHeaderActions()
+  await assertCustomFocus(page.locator('.am-row').first())
   await page.keyboard.press('ArrowDown')
   assert.equal(await page.locator('.am-row.is-selected .am-row-name').innerText(), 'Weekday handoff')
   await page.keyboard.press('ArrowUp')
@@ -234,6 +351,7 @@ try {
   await page.screenshot({ path: `${output}/overview.png` })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   assert.equal(await page.locator('.am-facts').count(), 1)
+  assert.ok(await page.locator('.am-facts code').count() > 0, 'Settings must exercise Host code typography')
   await assertTypography()
   await page.getByRole('button', { name: /Run history/ }).click()
   await page.locator('.am-run').click()
@@ -246,6 +364,26 @@ try {
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   assert.equal(await page.locator('.am-editor-disclosure').count(), 4)
   assert.equal(await page.locator('.am-editor-disclosure[open]').count(), 0)
+  assert.equal(await page.locator('.am-editor .am-pill-group button').count() > 0, true, 'Editor must exercise real Host Pills')
+  assert.equal(await page.locator('.am-editor-disclosure > summary > svg.am-disclosure-chevron').count(), 4)
+  const disclosure = page.locator('.am-editor-disclosure summary').first()
+  assert.equal(await disclosure.evaluate((el) => getComputedStyle(el).listStyleType), 'none', 'Only the explicit Host chevron is shown')
+  await assertCustomFocus(disclosure)
+  await page.keyboard.press('Enter')
+  assert.equal(await page.locator('.am-editor-disclosure[open]').count(), 1, 'Native details retains keyboard activation')
+  await page.keyboard.press('Enter')
+  assert.equal(await page.locator('.am-editor-disclosure[open]').count(), 0)
+  await assertCustomFocus(page.locator('.am-select').first())
+  assert.deepEqual(await page.locator('.am-select').first().evaluate((el) => {
+    const css = getComputedStyle(el)
+    return [el.getBoundingClientRect().height, css.borderRadius]
+  }), [32, '8px'])
+  await page.locator('textarea').first().focus()
+  assert.deepEqual(await page.locator('textarea').first().evaluate((el) => {
+    const css = getComputedStyle(el)
+    return { visible: el.matches(':focus-visible'), outline: css.outlineStyle, focusedBorder: css.borderColor === css.color }
+  }), { visible: true, outline: 'none', focusedBorder: true }, 'Textarea uses a focused border without an extra ring')
+  await assertTypography()
   assert.equal(deliveryReads.length, 0, 'Disabled delivery does not fetch bot metadata')
   await page.getByRole('button', { name: 'Save changes', exact: true }).waitFor()
   await page.locator('#am-name').fill('Weekly dependency watch · Edited')
@@ -274,6 +412,8 @@ try {
   // Manual-only session targeting: selecting does not commit until Save.
   const beforeTargetSave = writes.length
   await page.getByRole('button', { name: 'Session mode', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Use an existing session', exact: true }).waitFor()
+  await assertTypography()
   await page.getByRole('menuitem', { name: 'Use an existing session', exact: true }).click()
   assert.equal(await page.locator('.am-editor-disclosure').count(), 3, 'Pinned sessions do not expose ignored fresh-agent controls')
   assert.equal(await page.getByRole('button', { name: 'Save changes', exact: true }).isDisabled(), true)
@@ -382,6 +522,8 @@ try {
   // Delivery help is discoverable before enabling, by hover, keyboard, or tap.
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   const deliveryHelp = page.getByRole('button', { name: 'About message delivery', exact: true })
+  assert.equal(await deliveryHelp.locator('svg').count(), 1, 'Help uses the Host question icon, not a text glyph')
+  assert.equal((await deliveryHelp.innerText()).trim(), '')
   const helpText = page.getByText('Send Automation results and failure reports through dsh-im installed on the same Host. Configure a bot and save a target in dsh-im first. No pinned Session or two-way sync is required.', { exact: true })
   await deliveryHelp.hover()
   await helpText.waitFor()
@@ -502,6 +644,8 @@ try {
   if (await page.getByRole('button', { name: 'Back to list', exact: true }).isVisible()) await page.getByRole('button', { name: 'Back to list', exact: true }).click()
   await page.locator('.am-row').first().click()
   await assertTypography()
+  assert.equal(await page.locator('.am-header > button').evaluateAll((buttons) => buttons.every((button) =>
+    button.scrollHeight <= button.clientHeight && button.scrollWidth <= button.clientWidth)), true, 'Header actions must not wrap or clip on mobile')
   await page.screenshot({ path: `${output}/mobile-detail.png` })
   assert.equal(await page.locator('.am-panel').evaluate((el) => el.scrollWidth > el.clientWidth), false)
   await page.getByRole('button', { name: 'Back to list', exact: true }).click()
@@ -538,6 +682,8 @@ try {
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await page.getByRole('heading', { name: 'Start with an idea' }).waitFor()
   const emptyBox = await page.locator('.am-panel').boundingBox()
+  assert.equal(await page.locator('.am-example > svg').count(), await page.locator('.am-example').count(), 'Each example has an explicit Host launch icon')
+  assert.equal(await page.locator('.am-example').first().evaluate((el) => getComputedStyle(el, '::after').content), 'none', 'No font-dependent arrow pseudo-element remains')
   assert.equal(emptyBox.width, 640)
   assert.ok(emptyBox.height < panelBox.height, 'Empty state should fit its content, not reserve a full workspace')
   await assertTypography()
