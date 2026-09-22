@@ -1,5 +1,5 @@
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { AutomationStateSchema, emptyAutomationState, type AutomationState } from './types.js'
 
@@ -8,7 +8,7 @@ export type AtomicWriter = (path: string, content: string) => Promise<void>
 export async function writeJsonAtomic(path: string, content: string): Promise<void> {
   const directory = dirname(path)
   await mkdir(directory, { recursive: true })
-  const temporary = join(directory, `.${path.split('/').at(-1) ?? 'state'}.${randomUUID()}.tmp`)
+  const temporary = join(directory, `.${basename(path)}.${randomUUID()}.tmp`)
   let handle
   try {
     handle = await open(temporary, 'wx', 0o600)
@@ -17,11 +17,24 @@ export async function writeJsonAtomic(path: string, content: string): Promise<vo
     await handle.close()
     handle = undefined
     await rename(temporary, path)
-    const directoryHandle = await open(directory, 'r')
-    try {
-      await directoryHandle.sync()
-    } finally {
-      await directoryHandle.close()
+    // Windows cannot fsync a read-only directory handle. File contents above
+    // are still synced before the atomic rename on every platform.
+    if (process.platform !== 'win32') {
+      try {
+        const directoryHandle = await open(directory, 'r')
+        try {
+          await directoryHandle.sync()
+        } finally {
+          await directoryHandle.close()
+        }
+      } catch (error) {
+        // Rename committed the new state. Rejecting now would leave the store's
+        // memory stale and allow a later mutation to overwrite that commit.
+        process.emitWarning(`Automation state was committed to ${path}, but directory sync failed; crash durability is not guaranteed.`, {
+          code: 'AUTOMATION_DIRECTORY_SYNC_FAILED',
+          detail: error instanceof Error ? error.stack ?? error.message : String(error),
+        })
+      }
     }
   } finally {
     if (handle !== undefined) await handle.close().catch(() => undefined)

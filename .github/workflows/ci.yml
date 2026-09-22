@@ -15,8 +15,12 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate
-    runs-on: ubuntu-latest
+    name: Validate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -46,3 +50,15 @@ jobs:
 
       - name: Check npm package contents
         run: npm pack --dry-run
+
+  required:
+    # Keep the branch-protection check name stable across matrix changes.
+    name: Validate
+    needs: validate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every platform to pass
+        env:
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+        run: test "$VALIDATION_RESULT" = success
