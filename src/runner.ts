@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { AutomationError } from './errors.js'
@@ -209,7 +209,7 @@ export class DshAutomationRunner implements AutomationRunner {
         active.cancelValidation = () => reject(new Error(`Automation run canceled before Agent creation: ${active.cancelReason}.`))
       })
       const validationExecution = pinned
-        ? { ...task.execution, agentPreset: undefined, provider: undefined, model: undefined, skills: [] }
+        ? { ...task.execution, agentPreset: undefined, provider: undefined, model: undefined, reasoningEffort: undefined, skills: [] }
         : task.execution
       await Promise.race([
         this.agentConfiguration.validate(validationExecution, task.security.permissionPreset, { allowLegacyPartialModel: true }),
@@ -242,6 +242,7 @@ export class DshAutomationRunner implements AutomationRunner {
           agentOptions: {
             ...(task.execution.provider === undefined ? {} : { provider: task.execution.provider }),
             ...(task.execution.model === undefined ? {} : { model: task.execution.model }),
+            ...(task.execution.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(task.execution.reasoningEffort) }),
           },
           setup: async (agentCtx) => { await this.ctx.agentPresets.mount(agentCtx, task.execution.agentPreset) },
         })

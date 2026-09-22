@@ -16,6 +16,7 @@ import { Select, type SelectOption } from './shared.js'
 import { request } from './store.js'
 import { Disclosure, Field, Section } from './editor-layout.js'
 import { SkillPicker } from './SkillPicker.js'
+import { ModelSelection } from './ModelSelection.js'
 
 /** The PATCH body shape the controller accepts. */
 export type TaskUpdateBody = Partial<Pick<AutomationTaskView, 'name' | 'prompt' | 'schedule' | 'notificationPolicy' | 'pauseAfterConsecutiveFailures'>> & {
@@ -141,6 +142,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   const [agentPreset, setAgentPreset] = React.useState(task.execution.agentPreset ?? '')
   const [provider, setProvider] = React.useState(task.execution.provider ?? '')
   const [model, setModel] = React.useState(task.execution.model ?? '')
+  const [reasoningEffort, setReasoningEffort] = React.useState(task.execution.reasoningEffort ?? '')
   const [skills, setSkills] = React.useState<string[]>(task.execution.skills)
   const [options, setOptions] = React.useState<AgentConfigurationOptions>()
   const [optionsLoading, setOptionsLoading] = React.useState(true)
@@ -149,7 +151,10 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   const { scheduleChanged } = scheduleEditor
   const permissionChanged = permissionPreset !== task.security.permissionPreset
   const modelChanged = provider !== (task.execution.provider ?? '') || model !== (task.execution.model ?? '')
-  const agentExecutionChanged = !pinned && (agentPreset !== (task.execution.agentPreset ?? '') || modelChanged ||
+  const reasoningChanged = reasoningEffort !== (task.execution.reasoningEffort ?? '')
+  const reasoning = options?.reasoning?.provider === provider && options.reasoning.model === model ? options.reasoning : undefined
+  const reasoningValid = reasoningEffort === '' || reasoning?.efforts.some((entry) => entry.id === reasoningEffort) === true
+  const agentExecutionChanged = !pinned && (agentPreset !== (task.execution.agentPreset ?? '') || modelChanged || reasoningChanged ||
     skills.join('\0') !== task.execution.skills.join('\0'))
   const executionChanged = targetChanged || agentExecutionChanged
   const changed = name.trim() !== task.name || prompt.trim() !== task.prompt || scheduleChanged || permissionChanged ||
@@ -159,7 +164,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   const selectedPresetAvailable = agentPreset === '' || options?.presets.some((entry) => entry.id === agentPreset && entry.broken === undefined)
   const skillsAvailable = skills.every((entry) => options?.skills.some((option) => option.name === entry))
   const legacyPartialModelUnchanged = !modelChanged && ((task.execution.provider === undefined) !== (task.execution.model === undefined))
-  const configValid = selectedPermission !== undefined && (pinned || (selectedPresetAvailable !== false && skillsAvailable &&
+  const configValid = selectedPermission !== undefined && (pinned || (selectedPresetAvailable !== false && skillsAvailable && reasoningValid &&
     (((provider === '') === (model === '')) || legacyPartialModelUnchanged)))
   const requiredFieldsValid = name.trim() !== '' && prompt.trim() !== '' && scheduleEditor.valid
   const blocked = saving || optionsLoading || optionsError !== undefined || !configValid || !targetValid || !deliveryValid || !requiredFieldsValid || !changed || (permissionChanged && !permissionConfirmed)
@@ -169,12 +174,12 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   }, [changed, onDirtyChange])
 
   const optionsRequestSequence = React.useRef(0)
-  const loadOptions = React.useCallback(async (candidate?: string) => {
+  const loadOptions = React.useCallback(async () => {
     const sequence = ++optionsRequestSequence.current
     try {
       setOptionsLoading(true)
       setOptionsError(undefined)
-      const query = candidate === undefined ? '' : `?agentPreset=${encodeURIComponent(candidate)}`
+      const query = `?${new URLSearchParams({ agentPreset, provider: model === '' ? '' : provider, model: provider === '' ? '' : model })}`
       const value = await request(`/tasks/${encodeURIComponent(task.id)}/options${query}`) as { options: AgentConfigurationOptions }
       if (sequence === optionsRequestSequence.current) setOptions(value.options)
     } catch (reason) {
@@ -184,7 +189,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
     } finally {
       if (sequence === optionsRequestSequence.current) setOptionsLoading(false)
     }
-  }, [task.id])
+  }, [task.id, agentPreset, provider, model])
 
   React.useEffect(() => {
     void loadOptions()
@@ -221,6 +226,17 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
       ...(entry.description === undefined ? {} : { hint: entry.description }),
     })),
   ]
+  const reasoningOptions: SelectOption[] = [
+    { value: '', label: t('reasoningDefault') },
+    ...(reasoningEffort !== '' && reasoning?.efforts.some((entry) => entry.id === reasoningEffort) !== true
+      ? [{ value: reasoningEffort, label: `${reasoningEffort} · ${t('unavailable')}`, disabled: true }] : []),
+    ...(reasoning?.efforts ?? []).map((entry) => ({ value: entry.id, label: entry.name,
+      ...(entry.description === undefined ? {} : { hint: entry.description }) })),
+  ]
+  const reasoningHint = provider === '' || model === '' ? t('reasoningSelectModel')
+    : reasoning === undefined ? t('reasoningUnavailable')
+      : reasoning.error !== undefined ? t('reasoningFailure', { error: reasoning.error })
+        : reasoning.efforts.length === 0 ? t('reasoningUnsupported') : t('reasoningHint')
   const permissionOptions: SelectOption[] = [
     ...(options?.permissions.some((entry) => entry.id === permissionPreset) !== true
       ? [{ value: permissionPreset, label: `${permissionPreset} · ${t('unavailable')}` }]
@@ -259,6 +275,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
                   provider: provider || null,
                   model: model || null,
                 }),
+                ...(reasoningChanged ? { reasoningEffort: reasoningEffort || null } : {}),
                 ...(skills.join('\0') === task.execution.skills.join('\0') ? {} : { skills }),
               }),
             },
@@ -290,8 +307,8 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
         {!configValid && !optionsLoading && optionsError === undefined && (
           <p className="am-alert is-error" role="alert">{t('editorConfigInvalid')}</p>
         )}
-        {(optionsError !== undefined || !configValid || (options?.modelFailures.length ?? 0) > 0) && !optionsLoading && (
-          <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => { void loadOptions(agentPreset) }}>
+        {(optionsError !== undefined || !configValid || reasoning?.error !== undefined || (options?.modelFailures.length ?? 0) > 0) && !optionsLoading && (
+          <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => { void loadOptions() }}>
             {t('retry')}
           </Button>
         )}
@@ -353,10 +370,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
               disabled={saving || optionsLoading}
               ariaLabel={t('agentPreset')}
               options={presetOptions}
-              onChange={(next) => {
-                setAgentPreset(next)
-                void loadOptions(next)
-              }}
+              onChange={setAgentPreset}
             />
           </Field>
           <Field label={t('provider')}>
@@ -368,16 +382,17 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
               onChange={(next) => {
                 setProvider(next)
                 setModel('')
+                setReasoningEffort('')
               }}
             />
           </Field>
-          <Field label={t('model')}>
-            <Select
-              value={model}
-              disabled={saving || optionsLoading || provider === ''}
-              ariaLabel={t('model')}
-              options={modelOptions}
-              onChange={setModel}
+          <Field label={t('model')} hint={provider !== '' && model !== '' && (reasoning === undefined || reasoning.error !== undefined || reasoning.efforts.length === 0) ? reasoningHint : undefined}>
+            <ModelSelection
+              model={model} effort={reasoningEffort} models={modelOptions} efforts={reasoningOptions}
+              disabled={saving || optionsLoading || (provider === '' && reasoningEffort === '')} modelDisabled={provider === ''}
+              effortDisabled={(reasoning?.efforts.length ?? 0) === 0 && reasoningEffort === ''}
+              onModel={(next) => { setModel(next); setReasoningEffort('') }}
+              onEffort={setReasoningEffort} t={t}
             />
           </Field>
           <Field full label={t('selectedSkills')}>

@@ -219,6 +219,26 @@ const createArgs = {
   creation_confirmed: true, once_at: '2026-03-21T00:00:00.000Z',
 }
 
+test('reasoning tools forward exact selections, clear with null, and never capture the creator effort', async () => {
+  const fixture = setup()
+  Object.assign(fixture.exec.agent.options, { reasoningEffort: 'creator-high' })
+  const create = fixture.byName('automation_create')
+  assert.ok(create.parameters.properties.reasoning_effort)
+  assert.equal((await create.execute(createArgs, fixture.exec)).ok, true)
+  assert.equal(Object.hasOwn(fixture.createRequests[0]!.execution, 'reasoningEffort'), false)
+  assert.equal((await create.execute({ ...createArgs, provider: 'p', model: 'm', reasoning_effort: ' vendor: auto ' }, fixture.exec)).ok, true)
+  assert.equal(fixture.createRequests[1]!.execution.reasoningEffort, ' vendor: auto ')
+  const update = fixture.byName('automation_update')
+  for (const effort of ['off', null]) assert.equal((await update.execute({ id: 'task', reasoning_effort: effort }, fixture.exec)).ok, true)
+  assert.deepEqual(fixture.updateRequests, [{ execution: { reasoningEffort: 'off' } }, { execution: { reasoningEffort: null } }])
+  const options = fixture.byName('automation_options')
+  assert.equal((await options.execute({ provider: 'p', model: 'm' }, fixture.exec)).ok, true)
+  assert.equal((await options.execute({ id: 'task', provider: 'p', model: 'm' }, fixture.exec)).ok, true)
+  assert.equal((await options.execute({ id: 'task', provider: '', model: '' }, fixture.exec)).ok, true)
+  assert.equal((await options.execute({ provider: 'p' }, fixture.exec)).ok, false)
+  assert.deepEqual(fixture.optionCalls, [['/tmp/workspace', 'standard', 'p', 'm'], ['task', undefined, 'p', 'm'], ['task', undefined, '', '']])
+})
+
 test('every tool rejects missing or foreign owner before side effects', async () => {
   const fixture = setup()
   for (const tool of fixture.definitions) {
@@ -256,8 +276,8 @@ test('options preserves omitted, explicit, and Host-default preset selection and
     assert.equal((await tool.execute(args, fixture.exec)).ok, true)
   }
   assert.deepEqual(fixture.optionCalls, [
-    ['/tmp/workspace', 'standard'], ['/tmp/workspace', undefined], ['/tmp/workspace', 'custom'],
-    ['task', undefined], ['task', null], ['task', 'custom'],
+    ['/tmp/workspace', 'standard', undefined, undefined], ['/tmp/workspace', undefined, undefined, undefined], ['/tmp/workspace', 'custom', undefined, undefined],
+    ['task', undefined, undefined, undefined], ['task', null, undefined, undefined], ['task', 'custom', undefined, undefined],
   ])
   Object.defineProperty(fixture.exec.agent.session.header, 'cwd', { value: undefined })
   for (const [name, args] of [['automation_options', {}], ['automation_create', createArgs]] as const) {

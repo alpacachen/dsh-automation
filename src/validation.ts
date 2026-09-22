@@ -43,12 +43,29 @@ export function assertOverrideId(value: string | null | undefined, label: string
   if (typeof value === 'string' && !value.trim()) throw new Error(`${label} must not be empty.`)
 }
 
+/** Effort ids are adapter-owned opaque strings: validate, but never trim or alias them. */
+export function assertReasoningEffort(value: string | null | undefined): void {
+  if (value !== undefined && value !== null && (typeof value !== 'string' || value.length === 0)) {
+    throw new Error('reasoningEffort must be a non-empty string.')
+  }
+}
+
+/** Explicit efforts need an exact route; pinned sessions retain their own configuration. */
+export function validateReasoningExecution(execution: Omit<AutomationExecution, 'target'> & { target?: AutomationExecution['target'] }): void {
+  assertReasoningEffort(execution.reasoningEffort)
+  if (execution.target?.mode !== 'pinned-session' && execution.reasoningEffort !== undefined
+    && (!execution.provider || !execution.model)) {
+    throw new Error('reasoningEffort requires an explicit provider and model.')
+  }
+}
+
 /** Validate an execution patch without mutating anything. */
 export function validateExecutionPatch(patch: AutomationExecutionPatch): void {
   assertProviderModelPair(patch.provider, patch.model)
   for (const value of [patch.agentPreset, patch.provider, patch.model]) {
     if (typeof value === 'string' && !value.trim()) throw new Error('Execution override ids must not be empty.')
   }
+  assertReasoningEffort(patch.reasoningEffort)
   if (patch.skills !== undefined) normalizeSkills(patch.skills)
 }
 
@@ -68,6 +85,8 @@ export function applyExecutionPatch(
     if (patch[key] === null) delete next[key]
     else next[key] = patch[key].trim()
   }
+  if (patch.reasoningEffort === null) delete next.reasoningEffort
+  else if (patch.reasoningEffort !== undefined) next.reasoningEffort = patch.reasoningEffort
   return next
 }
 

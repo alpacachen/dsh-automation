@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
-import { assertOverrideId, assertProviderModelPair } from './validation.js'
+import { assertOverrideId, assertProviderModelPair, assertReasoningEffort } from './validation.js'
 import type { AutomationController } from './controller.js'
 import { AutomationDeliverySchema, AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
 
@@ -85,7 +85,7 @@ function parseExecutionPatch(value: unknown, execution: AutomationTask['executio
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('execution must be an object.')
   const input = value as Record<string, unknown>
   if (Object.keys(input).length === 0) throw new Error('execution must contain at least one field.')
-  if (Object.keys(input).some((key) => !['agentPreset', 'provider', 'model', 'skills', 'target'].includes(key))) {
+  if (Object.keys(input).some((key) => !['agentPreset', 'provider', 'model', 'reasoningEffort', 'skills', 'target'].includes(key))) {
     throw new Error('execution contains an unknown field.')
   }
   const nullableString = (key: 'agentPreset' | 'provider' | 'model') => {
@@ -97,6 +97,9 @@ function parseExecutionPatch(value: unknown, execution: AutomationTask['executio
   const agentPreset = nullableString('agentPreset')
   const provider = nullableString('provider')
   const model = nullableString('model')
+  const reasoningEffort = input.reasoningEffort
+  if (reasoningEffort !== undefined && reasoningEffort !== null && typeof reasoningEffort !== 'string') throw new Error('execution.reasoningEffort must be a string or null.')
+  assertReasoningEffort(reasoningEffort)
   assertProviderModelPair(provider, model)
   if (input.skills !== undefined && (!Array.isArray(input.skills) || input.skills.some((name) => typeof name !== 'string'))) {
     throw new Error('execution.skills must be an array of strings.')
@@ -116,6 +119,7 @@ function parseExecutionPatch(value: unknown, execution: AutomationTask['executio
     ...(agentPreset === undefined ? {} : { agentPreset }),
     ...(provider === undefined ? {} : { provider }),
     ...(model === undefined ? {} : { model }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     ...(skills === undefined ? {} : { skills }),
     ...(target === undefined ? {} : { target }),
   }
@@ -161,7 +165,10 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
         const action = match[2]
         if (req.method === 'GET' && action === 'options') {
           const candidate = url.searchParams.has('agentPreset') ? url.searchParams.get('agentPreset') || null : undefined
-          send(res, 200, { options: await controller.options(id, candidate) })
+          const provider = url.searchParams.get('provider') ?? undefined
+          const model = url.searchParams.get('model') ?? undefined
+          assertProviderModelPair(provider, model)
+          send(res, 200, { options: await controller.options(id, candidate, provider, model) })
           return
         }
         if (req.method === 'PATCH' && action === undefined) {

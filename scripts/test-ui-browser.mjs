@@ -50,7 +50,16 @@ const deliveryTargets = {
   'bot-alpha': [{ targetId: 'report', name: 'Report chat', kind: 'user' }, { targetId: 'daily', name: 'Daily chat', kind: 'user' }],
   'bot-beta': [{ targetId: 'phone', name: 'Phone chat', kind: 'chat' }],
 }
-const options = { presets: [], models: [], modelFailures: [], skills: [], permissions: [
+const reasoningGates = new Map()
+let reasoningError = false
+const reasoningModels = {
+  deliberate: [{ id: 'vendor/thorough', name: 'Thorough review', description: 'Spend more time reasoning' }, { id: 'none', name: 'No reasoning' }],
+  quick: [{ id: 'brief', name: 'Brief review' }],
+  plain: [],
+}
+const options = { presets: [], models: [{ provider: 'fixture-models', name: 'Fixture models', models: [
+  { id: 'deliberate', name: 'Deliberate model' }, { id: 'quick', name: 'Quick model' }, { id: 'plain', name: 'Plain model' },
+] }], modelFailures: [], skills: [], permissions: [
   { id: 'read-only', name: 'Read only', sandbox: 'read-only', approval: 'never', default: true },
   { id: 'danger-full-access', name: 'Full access', sandbox: 'danger-full-access', approval: 'never', default: false },
 ] }
@@ -77,7 +86,14 @@ try {
       await deliveryGates.get(botId)
       return route.fulfill({ status, json: response })
     }
-    if (method === 'GET' && path.endsWith('/options')) return route.fulfill({ status: optionError ? 503 : 200, json: optionError ? { error: 'Fixture options unavailable' } : { options } })
+    if (method === 'GET' && path.endsWith('/options')) {
+      const provider = url.searchParams.get('provider')
+      const model = url.searchParams.get('model')
+      const reasoning = provider && model ? { provider, model, efforts: reasoningError ? [] : reasoningModels[model] ?? [],
+        ...(reasoningError ? { error: 'Fixture reasoning unavailable' } : {}) } : undefined
+      await reasoningGates.get(model)
+      return route.fulfill({ status: optionError ? 503 : 200, json: optionError ? { error: 'Fixture options unavailable' } : { options: { ...options, reasoning } } })
+    }
     if (method === 'GET' && path === '/tasks') return route.fulfill({ status: listError ? 503 : 200, json: listError ? { error: 'Fixture connection unavailable' } : { tasks, scheduler: { status: 'healthy', consecutiveFailures: 0 } } })
     writes.push({ path, method, body: route.request().postDataJSON() })
     const task = tasks.find((item) => path.split('/')[2] === item.id)
@@ -94,6 +110,7 @@ try {
         task.execution = { ...task.execution, ...execution,
           ...(execution.target?.mode === 'pinned-session' ? { target: { ...execution.target, workspaceId: task.execution.workspaceId, cwd: task.execution.cwd, fallback: 'fail' } } : {}),
         }
+        for (const key of ['agentPreset', 'provider', 'model', 'reasoningEffort']) if (execution[key] === null) delete task.execution[key]
       }
     }
     if (method === 'DELETE') tasks = tasks.filter((item) => item !== task)
@@ -412,6 +429,103 @@ try {
   await page.locator('.am-editor-disclosure[open]').scrollIntoViewIfNeeded()
   await assertTypography()
   await page.screenshot({ path: `${output}/editor-advanced.png` })
+  // Reasoning levels come from the selected model, with an independent no-override choice.
+  const reasoningSelect = page.getByRole('button', { name: 'Model and reasoning', exact: true })
+  const pick = async (label, option) => {
+    if (label === 'Model' || label === 'Reasoning effort') {
+      await reasoningSelect.click()
+      await page.getByRole('menuitem', { name: new RegExp(`^${label}`) }).click()
+    } else await page.getByRole('button', { name: label, exact: true }).click()
+    await page.getByRole('menuitem', { name: option }).click()
+  }
+  const assertReasoningDisabled = async () => {
+    await reasoningSelect.click()
+    assert.equal(await page.getByRole('menuitem', { name: /^Reasoning effort/ }).isDisabled(), true)
+    await page.keyboard.press('Escape')
+  }
+  const openAgentEditor = async () => {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await page.locator('.am-editor-disclosure summary').first().click()
+  }
+  const saveEditor = async () => {
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click()
+    await page.locator('.am-editor').waitFor({ state: 'hidden' })
+    return writes.filter((write) => write.method === 'PATCH').at(-1).body
+  }
+  assert.equal(await reasoningSelect.isDisabled(), true, 'Choose a provider before opening the model/effort menu')
+  const beforeReasoningSave = writes.length
+  await pick('Provider', /^Fixture models$/)
+  await pick('Model', /^Deliberate model$/)
+  await pick('Reasoning effort', /^Thorough review/)
+  assert.equal(writes.length, beforeReasoningSave, 'Selecting reasoning never saves implicitly')
+  await reasoningSelect.scrollIntoViewIfNeeded()
+  await assertTypography()
+  const providerBox = await page.getByRole('button', { name: 'Provider', exact: true }).boundingBox()
+  const modelBox = await reasoningSelect.boundingBox()
+  assert.equal(providerBox.y, modelBox.y, 'Provider, model and reasoning share one form row')
+  await page.screenshot({ path: `${output}/reasoning-effort.png` })
+  await reasoningSelect.click()
+  await page.getByRole('menuitem', { name: /^Reasoning effort/ }).waitFor()
+  await page.screenshot({ path: `${output}/reasoning-menu.png` })
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await page.getByRole('menuitem', { name: /^Default \(no override\)$/ }).waitFor()
+  await page.keyboard.press('Escape')
+  assert.equal(await page.locator('.am-editor').count(), 1, 'Escape closes the menu, not the editor')
+  await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''))
+  await reasoningSelect.click()
+  await page.screenshot({ path: `${output}/reasoning-menu-dark.png` })
+  await page.keyboard.press('Escape')
+  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
+  await page.setViewportSize({ width: 390, height: 844 })
+  if (await page.locator('.am-row.is-selected').isVisible()) await page.locator('.am-row.is-selected').click()
+  await reasoningSelect.scrollIntoViewIfNeeded()
+  await reasoningSelect.click()
+  await page.getByRole('menuitem', { name: /^Reasoning effort/ }).click()
+  const effortMenuBox = await page.getByRole('menu').boundingBox()
+  assert.ok(effortMenuBox.x >= 0 && effortMenuBox.x + effortMenuBox.width <= 390, 'The effort pane fits the mobile viewport')
+  await assertTypography()
+  await page.screenshot({ path: `${output}/reasoning-menu-mobile.png` })
+  await page.keyboard.press('Escape')
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  assert.deepEqual((await saveEditor()).execution, { provider: 'fixture-models', model: 'deliberate', reasoningEffort: 'vendor/thorough' })
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  assert.match(await page.locator('.am-facts').innerText(), /Reasoning effort\s+vendor\/thorough/)
+  await openAgentEditor()
+  assert.match(await reasoningSelect.innerText(), /Thorough review/)
+  await pick('Reasoning effort', /^Default \(no override\)$/)
+  assert.deepEqual((await saveEditor()).execution, { reasoningEffort: null })
+  await openAgentEditor()
+  await pick('Reasoning effort', /^No reasoning$/)
+  assert.deepEqual((await saveEditor()).execution, { reasoningEffort: 'none' }, 'Adapter none is an explicit choice, not clearing the override')
+  await openAgentEditor()
+  let releaseReasoning
+  reasoningGates.set('quick', new Promise((resolve) => { releaseReasoning = resolve }))
+  await pick('Model', /^Quick model$/)
+  await page.waitForFunction(() => document.querySelector('[aria-label="Model and reasoning"]').disabled)
+  assert.match(await reasoningSelect.innerText(), /Default/)
+  releaseReasoning()
+  reasoningGates.delete('quick')
+  await reasoningSelect.click()
+  await page.getByRole('menuitem', { name: /^Reasoning effort/ }).click()
+  assert.equal(await page.getByRole('menuitem', { name: /^Thorough review|^No reasoning$/ }).count(), 0, 'Previous model efforts never leak into the new model')
+  await page.getByRole('menuitem', { name: /^Brief review$/ }).click()
+  assert.deepEqual((await saveEditor()).execution, { provider: 'fixture-models', model: 'quick', reasoningEffort: 'brief' })
+  await openAgentEditor()
+  await pick('Model', /^Plain model$/)
+  await page.getByText('This model does not offer selectable reasoning levels.', { exact: true }).waitFor()
+  await assertReasoningDisabled()
+  assert.deepEqual((await saveEditor()).execution, { provider: 'fixture-models', model: 'plain', reasoningEffort: null })
+  await openAgentEditor()
+  reasoningError = true
+  await pick('Model', /^Deliberate model$/)
+  await page.getByText('Could not load reasoning levels: Fixture reasoning unavailable', { exact: true }).waitFor()
+  reasoningError = false
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await pick('Reasoning effort', /^Thorough review/)
+  await pick('Provider', /^Host default$/)
+  assert.deepEqual((await saveEditor()).execution, { provider: null, model: null }, 'Clearing the model cannot retain a hidden reasoning override')
+  await openAgentEditor()
   // Manual-only session targeting: selecting does not commit until Save.
   const beforeTargetSave = writes.length
   await page.getByRole('button', { name: 'Session mode', exact: true }).click()
@@ -441,7 +555,7 @@ try {
   await page.screenshot({ path: `${output}/session-target-dark.png` })
   await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.locator('.am-row.is-selected').click()
+  if (await page.locator('.am-row.is-selected').isVisible()) await page.locator('.am-row.is-selected').click()
   await page.getByRole('button', { name: 'Target session', exact: true }).scrollIntoViewIfNeeded()
   assert.equal(await page.getByRole('button', { name: 'Target session', exact: true }).isVisible(), true)
   assert.equal(await page.locator('.am-editor').evaluate((el) => el.scrollWidth > el.clientWidth), false)

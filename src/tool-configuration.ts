@@ -63,6 +63,8 @@ export function registerConfigurationTools(
     parameters: {
       id: { type: 'string', description: 'Existing automation id. Omit to use this Agent workspace.' },
       agent_preset: { type: 'string', description: 'Candidate preset id for skill discovery; empty means Host default.' },
+      provider: { type: 'string', description: 'Candidate provider for exact-model reasoning options; supply with model. Omit both to use the saved task model.' },
+      model: { type: 'string', description: 'Candidate model for reasoning options; supply with provider. Empty pair means no model override.' },
     },
     output: {
       schema: {
@@ -83,9 +85,10 @@ export function registerConfigurationTools(
     execute(args, exec) {
       return executeTool('automation_options', agent, exec.agent, async () => {
         const candidate = args.agent_preset === undefined ? undefined : args.agent_preset || undefined
+        assertProviderModelPair(args.provider, args.model)
         const options = args.id === undefined
-          ? await agentConfiguration.options(workspaceDirectory(agent), args.agent_preset === undefined ? rootCtx.agentPresets.composedPreset(agent.ctx) : candidate)
-          : await controller.options(args.id, args.agent_preset === undefined ? undefined : candidate ?? null)
+          ? await agentConfiguration.options(workspaceDirectory(agent), args.agent_preset === undefined ? rootCtx.agentPresets.composedPreset(agent.ctx) : candidate, args.provider, args.model)
+          : await controller.options(args.id, args.agent_preset === undefined ? undefined : candidate ?? null, args.provider, args.model)
         return { ok: true as const, options: options as unknown as Record<string, JsonValue> }
       })
     },
@@ -94,7 +97,7 @@ export function registerConfigurationTools(
 
   disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_create',
-    description: 'Create one durable unattended automation. Call automation_options before selecting Host ids. Before calling, show one concise preview with name, schedule/time zone, workspace, Agent preset, provider/model, ordered selected skills, exact Host permission label/id (including approval warning), notification policy, and failure-pause policy; wait for explicit user confirmation, then set creation_confirmed to true. Every run starts a fresh visible session. Presets with approval ask may wait until timeout because unattended runs never auto-approve. Supply either once_at, or rrule + time_zone + start_at.',
+    description: 'Create one durable unattended automation. Call automation_options before selecting Host ids. Before calling, show one concise preview with name, schedule/time zone, workspace, Agent preset, provider/model, ordered selected skills, reasoning effort (default or exact supported id), exact Host permission label/id (including approval warning), notification policy, and failure-pause policy; wait for explicit user confirmation, then set creation_confirmed to true. Every run starts a fresh visible session. Presets with approval ask may wait until timeout because unattended runs never auto-approve. Supply either once_at, or rrule + time_zone + start_at.',
     parameters: {
       name: { type: 'string', required: true, description: 'Short task name.' },
       prompt: { type: 'string', required: true, description: 'Self-contained prompt for every fresh run session.' },
@@ -107,6 +110,7 @@ export function registerConfigurationTools(
       agent_preset: { type: 'string', description: 'Host Agent preset id. Omit to capture the creating Agent preset.' },
       provider: { type: 'string', description: 'Provider override; must be supplied with model.' },
       model: { type: 'string', description: 'Model override; must be supplied with provider.' },
+      reasoning_effort: { type: 'string', description: 'Exact supported reasoning effort id from automation_options for the chosen provider/model. Omit to keep default behavior; not captured from the creating session. Ignored for pinned sessions.' },
       skills: { type: 'array', items: { type: 'string' }, description: 'Ordered user-invocable skill names to preload. Defaults to none.' },
       permission_preset: { type: 'string', required: true, description: 'Confirmed Host permission preset id for every run.' },
       execution_mode: { type: 'string', enum: ['fresh', 'pinned-session'], description: 'Execution destination; defaults to fresh.' },
@@ -146,6 +150,7 @@ export function registerConfigurationTools(
             cwd: workspace.path,
             ...(agentPreset === undefined ? {} : { agentPreset }),
             ...(capturedProvider === undefined || capturedModel === undefined ? {} : { provider: capturedProvider, model: capturedModel }),
+            ...(args.reasoning_effort === undefined ? {} : { reasoningEffort: args.reasoning_effort }),
             skills: args.skills ?? [],
             target,
           },
@@ -168,7 +173,7 @@ export function registerConfigurationTools(
 
   disposers.push(toolCtx.tools.register(defineTool({
     name: 'automation_update',
-    description: 'Update an existing automation. Call automation_options before selecting Host ids. Omitted fields stay unchanged; null clears an Agent preset or provider/model override, and skills replaces the ordered selection. Provider/model must be set or cleared together. Before an actual permission change, show the exact Host preset and get explicit confirmation; set permission_confirmed only after they confirm.',
+    description: 'Update an existing automation. Call automation_options before selecting Host ids. Omitted fields stay unchanged; null clears an Agent preset, provider/model, or reasoning effort override, and skills replaces the ordered selection. Provider/model must be set or cleared together. Before an actual permission change, show the exact Host preset and get explicit confirmation; set permission_confirmed only after they confirm.',
     parameters: {
       id: { type: 'string', required: true, description: 'Exact automation id.' },
       name: { type: 'string', description: 'Replacement task name.' },
@@ -182,6 +187,7 @@ export function registerConfigurationTools(
       agent_preset: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement Host Agent preset id, or null for Host default.' },
       provider: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement provider, or null with model to use Host default.' },
       model: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Replacement model, or null with provider to use Host default.' },
+      reasoning_effort: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Exact supported effort id for the saved or replacement provider/model; null clears the override. Omit to preserve it, including on model changes. Ignored for pinned sessions.' },
       skills: { type: 'array', items: { type: 'string' }, description: 'Replacement ordered selected skills; [] clears.' },
       permission_preset: { type: 'string', description: 'Replacement Host permission preset id for future runs.' },
       permission_confirmed: { type: 'boolean', description: 'Required and true only after the user explicitly confirms a permission change.' },
@@ -200,7 +206,7 @@ export function registerConfigurationTools(
         if (args.permission_preset !== undefined && args.permission_preset !== current.security.permissionPreset && args.permission_confirmed !== true) {
           throw new Error('Explicit user confirmation is required to change permissions.')
         }
-        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined && args.permission_preset === undefined && args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.skills === undefined) {
+        if (args.name === undefined && args.prompt === undefined && schedule === undefined && args.notification_policy === undefined && args.pause_after_failures === undefined && args.permission_preset === undefined && args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.reasoning_effort === undefined && args.skills === undefined) {
           throw new Error('Supply at least one field to update.')
         }
         const task = await controller.update(args.id, {
@@ -211,11 +217,12 @@ export function registerConfigurationTools(
           ...(args.pause_after_failures === undefined ? {} : { pauseAfterConsecutiveFailures: args.pause_after_failures }),
           ...(args.permission_preset === undefined ? {} : { permissionPreset: args.permission_preset }),
           ...(args.permission_preset === undefined || args.permission_confirmed !== true ? {} : { permissionChangeConfirmed: true as const }),
-          ...((args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.skills === undefined) ? {} : {
+          ...((args.agent_preset === undefined && args.provider === undefined && args.model === undefined && args.reasoning_effort === undefined && args.skills === undefined) ? {} : {
             execution: {
               ...(args.agent_preset === undefined ? {} : { agentPreset: args.agent_preset }),
               ...(args.provider === undefined ? {} : { provider: args.provider }),
               ...(args.model === undefined ? {} : { model: args.model }),
+              ...(args.reasoning_effort === undefined ? {} : { reasoningEffort: args.reasoning_effort }),
               ...(args.skills === undefined ? {} : { skills: args.skills }),
             },
           }),

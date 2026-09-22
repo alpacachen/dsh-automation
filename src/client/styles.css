@@ -148,6 +148,13 @@
 .am-select:disabled, .am-textarea:disabled { opacity:.5; cursor:default; }
 .am-select-value { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .am-select-menu { min-width:220px; }
+.am-model-summary { display:flex; align-items:center; gap:8px; min-width:0; }
+.am-model-summary > span { overflow:hidden; text-overflow:ellipsis; }
+.am-model-summary > span:last-child { flex:none; color:var(--dsw-alias-label-tertiary); }
+.am-model-menu { min-width:240px; }
+.am-model-menu-row { display:flex; align-items:center; justify-content:space-between; gap:16px; width:100%; }
+.am-model-menu-row > span:nth-child(2) { margin-left:auto; color:var(--dsw-alias-label-tertiary); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.am-model-menu-row > svg { flex:none; color:var(--dsw-alias-label-tertiary); }
 .am-option { display:flex; flex-direction:column; gap:2px; }
 .am-option small { color:var(--dsw-alias-label-tertiary); font:var(--dsw-font-xs-13); }
 .am-skills { display:flex; flex-direction:column; gap:12px; }

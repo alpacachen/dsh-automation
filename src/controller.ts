@@ -69,7 +69,13 @@ export class AutomationController {
   }
 
   async create(request: CreateAutomationRequest): Promise<AutomationTask> {
-    await this.agentConfiguration?.validate(normalizedExecution(request.execution), request.permissionPreset)
+    const execution = normalizedExecution(request.execution)
+    await this.agentConfiguration?.validate(
+      execution.target?.mode === 'pinned-session'
+        ? { ...execution, agentPreset: undefined, provider: undefined, model: undefined, reasoningEffort: undefined, skills: [] }
+        : execution,
+      request.permissionPreset,
+    )
     const task = await this.domain.create(request, this.now())
     this.scheduler.requestDrive()
     return task
@@ -95,7 +101,7 @@ export class AutomationController {
         && ((current.execution.provider === undefined) !== (current.execution.model === undefined))
       await agentConfiguration?.validate(
         execution.target?.mode === 'pinned-session'
-          ? { ...execution, agentPreset: undefined, provider: undefined, model: undefined, skills: [] }
+          ? { ...execution, agentPreset: undefined, provider: undefined, model: undefined, reasoningEffort: undefined, skills: [] }
           : execution,
         request.permissionPreset ?? current.security.permissionPreset,
         { allowLegacyPartialModel: preservesLegacyPartialModel },
@@ -106,10 +112,17 @@ export class AutomationController {
     return task
   }
 
-  async options(id: string, agentPreset?: string | null) {
+  async options(id: string, agentPreset?: string | null, provider?: string, model?: string) {
     if (this.agentConfiguration === undefined) throw new Error('Agent configuration is unavailable.')
     const task = this.domain.get(id)
-    return this.agentConfiguration.options(task.execution.cwd, agentPreset === undefined ? task.execution.agentPreset : agentPreset ?? undefined)
+    const savedModel = provider === undefined && model === undefined && task.execution.target?.mode !== 'pinned-session'
+      && task.execution.provider !== undefined && task.execution.model !== undefined
+    return this.agentConfiguration.options(
+      task.execution.cwd,
+      agentPreset === undefined ? task.execution.agentPreset : agentPreset ?? undefined,
+      savedModel ? task.execution.provider : provider,
+      savedModel ? task.execution.model : model,
+    )
   }
 
   async delete(id: string): Promise<boolean> {

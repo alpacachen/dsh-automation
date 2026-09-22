@@ -1,8 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { standingMountFor } from '@deepseek-ai/dsh-agent-presets'
 import { isUserInvocable, renderSkillContent, type SkillSummary } from '@deepseek-ai/dsh-skill'
-import { assertProviderModelPair } from './validation.js'
+import { assertProviderModelPair, validateReasoningExecution } from './validation.js'
 import type { AgentConfigurationOptions, AutomationExecution, AutomationTask } from './types.js'
 
 import '@deepseek-ai/dsh-agent-presets'
@@ -13,7 +14,21 @@ import '@deepseek-ai/dsh-skill'
 export class AgentConfiguration {
   constructor(readonly ctx: Context) {}
 
-  async options(cwd: string, agentPreset?: string): Promise<AgentConfigurationOptions> {
+  async options(cwd: string, agentPreset?: string, provider?: string, model?: string): Promise<AgentConfigurationOptions> {
+    assertProviderModelPair(provider, model)
+    let reasoning: AgentConfigurationOptions['reasoning']
+    if (provider && model) {
+      try {
+        const info = await this.ctx.llm.resolveModelInfo(provider, model)
+        reasoning = {
+          provider, model,
+          efforts: info.reasoning?.efforts.map(({ id, name, description }) => ({ id, name, ...(description === undefined ? {} : { description }) })) ?? [],
+          ...(info.reasoning?.defaultEffort === undefined ? {} : { defaultEffort: info.reasoning.defaultEffort }),
+        }
+      } catch (error) {
+        reasoning = { provider, model, efforts: [], error: message(error) }
+      }
+    }
     const presets = await this.ctx.agentPresets.list()
     const providers = this.ctx.llm.listProviders()
     const modelResults = await Promise.all(providers.map(async (provider) => {
@@ -31,6 +46,7 @@ export class AgentConfiguration {
       skills = (await this.ctx.skills.list({ cwd, scope })).filter(isUserInvocable)
     }
     return {
+      ...(reasoning === undefined ? {} : { reasoning }),
       presets: presets.map((preset) => ({
         id: preset.id,
         name: preset.name ?? preset.id,
@@ -82,11 +98,18 @@ export class AgentConfiguration {
     permissionPreset: string,
     options: { readonly allowLegacyPartialModel?: boolean } = {},
   ): Promise<void> {
+    if (execution.target?.mode === 'pinned-session') {
+      execution = { ...execution, agentPreset: undefined, provider: undefined, model: undefined, reasoningEffort: undefined, skills: [] }
+    }
     const preset = await this.ctx.agentPresets.resolve(execution.agentPreset)
     if (preset.broken !== undefined) throw new Error(`Agent preset ${preset.id} is unavailable: ${preset.broken}`)
     assertProviderModelPair(execution.provider, execution.model, { allowLegacyPartialModel: options.allowLegacyPartialModel === true })
+    validateReasoningExecution(execution)
     if (execution.provider !== undefined && execution.model !== undefined) {
-      await this.ctx.llm.resolveCallConfig({ provider: execution.provider, model: execution.model })
+      await this.ctx.llm.resolveCallConfig({
+        provider: execution.provider, model: execution.model,
+        ...(execution.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(execution.reasoningEffort) }),
+      })
     }
     const scope = await this.ctx.agentPresets.standingKeyFor(execution.agentPreset)
     for (const name of execution.skills) {

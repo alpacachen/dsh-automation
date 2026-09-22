@@ -22,6 +22,31 @@ const daily = {
   startAt: '2026-03-20T09:00:00',
 }
 
+test('reasoning overrides persist unchanged, survive unrelated/model edits, and clear only with null', async (t) => {
+  const { domain, store } = await setup(t)
+  const now = Date.parse('2026-03-20T00:00:00.000Z')
+  const request = createRequest(daily)
+  const legacy = await domain.create(request, now)
+  assert.equal(Object.hasOwn(legacy.execution, 'reasoningEffort'), false)
+  const task = await domain.create({ ...request, execution: { ...request.execution, reasoningEffort: ' vendor: auto ' } }, now)
+  assert.equal(task.execution.reasoningEffort, ' vendor: auto ')
+  assert.equal(AutomationTaskSchema.parse(store.snapshot().tasks[task.id]).execution.reasoningEffort, ' vendor: auto ')
+  const reloaded = new AutomationStore(store.path)
+  await reloaded.init()
+  assert.equal(reloaded.snapshot().tasks[task.id]!.execution.reasoningEffort, ' vendor: auto ')
+  assert.equal(Object.hasOwn(reloaded.snapshot().tasks[legacy.id]!.execution, 'reasoningEffort'), false)
+  await domain.update(task.id, { name: 'Renamed' }, now)
+  const modelChanged = await domain.update(task.id, { execution: { provider: 'other', model: 'new', agentPreset: 'new-preset' } }, now)
+  assert.equal(modelChanged.execution.reasoningEffort, ' vendor: auto ')
+  await assert.rejects(domain.update(task.id, { execution: { provider: null, model: null } }, now), /requires an explicit provider and model/)
+  assert.equal(domain.get(task.id).execution.reasoningEffort, ' vendor: auto ')
+  const cleared = await domain.update(task.id, { execution: { provider: null, model: null, reasoningEffort: null } }, now)
+  assert.equal(Object.hasOwn(cleared.execution, 'reasoningEffort'), false)
+  await assert.rejects(domain.create({ ...request, execution: { ...request.execution, reasoningEffort: '' } }, now), /non-empty/)
+  await assert.rejects(domain.update(task.id, { execution: { reasoningEffort: '' } }, now), /non-empty/)
+  await assert.rejects(domain.create({ ...request, execution: { ...request.execution, provider: undefined, model: undefined, reasoningEffort: 'high' } }, now), /requires an explicit provider and model/)
+})
+
 test('create trims input and stores confirmed permission audit state', async (t) => {
   const { domain } = await setup(t)
   const task = await domain.create(

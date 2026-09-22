@@ -55,6 +55,51 @@ function context() {
   } as unknown as Context
 }
 
+test('reasoning discovery resolves only the candidate route and preserves opaque Host metadata', async () => {
+  const ctx = context()
+  const calls: string[][] = []
+  ctx.llm.resolveModelInfo = async (provider, model) => {
+    calls.push([provider, model])
+    if (model === 'broken') throw new Error('metadata offline')
+    return {
+      provider, id: model, name: model,
+      ...(model === 'plain' ? {} : { reasoning: { efforts: [{ id: 'vendor: auto' as any, name: 'Adaptive', description: 'Vendor controlled' }, { id: 'disabled' as any, name: 'Disabled' }], defaultEffort: 'vendor: auto' as any } }),
+    }
+  }
+  const config = new AgentConfiguration(ctx)
+  assert.equal((await config.options('/w')).reasoning, undefined)
+  assert.equal((await config.options('/w', undefined, '', '')).reasoning, undefined)
+  assert.deepEqual(calls, [])
+  assert.deepEqual((await config.options('/w', undefined, 'good', 'unlisted')).reasoning, {
+    provider: 'good', model: 'unlisted', efforts: [{ id: 'vendor: auto', name: 'Adaptive', description: 'Vendor controlled' }, { id: 'disabled', name: 'Disabled' }], defaultEffort: 'vendor: auto',
+  })
+  assert.deepEqual((await config.options('/w', undefined, 'good', 'plain')).reasoning, { provider: 'good', model: 'plain', efforts: [] })
+  assert.deepEqual((await config.options('/w', undefined, 'good', 'broken')).reasoning, { provider: 'good', model: 'broken', efforts: [], error: 'metadata offline' })
+  assert.deepEqual(calls, [['good', 'unlisted'], ['good', 'plain'], ['good', 'broken']])
+  await assert.rejects(config.options('/w', undefined, 'good'), /set together/)
+})
+
+test('reasoning validation delegates exact ids to Host and ignores pinned overrides', async () => {
+  const ctx = context()
+  const calls: unknown[] = []
+  ctx.llm.resolveCallConfig = async (config) => {
+    calls.push(config)
+    if (config.reasoningEffort !== undefined && config.reasoningEffort !== 'vendor: auto') throw new Error('UNSUPPORTED_REASONING_EFFORT')
+    return config
+  }
+  const config = new AgentConfiguration(ctx)
+  const chosen = { ...execution, provider: 'good', model: 'unlisted', reasoningEffort: 'vendor: auto' }
+  await config.validate(chosen, 'workspace-safe')
+  assert.deepEqual(calls, [{ provider: 'good', model: 'unlisted', reasoningEffort: 'vendor: auto' }])
+  await assert.rejects(config.validate({ ...chosen, reasoningEffort: 'auto' }, 'workspace-safe'), /UNSUPPORTED_REASONING_EFFORT/)
+  await assert.rejects(config.validate({ ...chosen, provider: undefined, model: undefined }, 'workspace-safe'), /requires an explicit provider and model/)
+  await assert.rejects(config.validate({ ...chosen, model: undefined }, 'workspace-safe', { allowLegacyPartialModel: true }), /requires an explicit provider and model/)
+  await assert.rejects(config.validate({ ...chosen, reasoningEffort: '' }, 'workspace-safe'), /non-empty/)
+  const before = calls.length
+  await config.validate({ ...chosen, agentPreset: 'missing', reasoningEffort: 'unsupported', skills: ['missing'], target: { mode: 'pinned-session', sessionId: 's', workspaceId: chosen.workspaceId, cwd: chosen.cwd, fallback: 'fail' } }, 'workspace-safe')
+  assert.equal(calls.length, before)
+})
+
 test('Host options preserve partial model failures and dynamic permission metadata', async () => {
   const options = await new AgentConfiguration(context()).options('/tmp/workspace')
   assert.deepEqual(options.models.map((entry) => entry.provider), ['good'])
