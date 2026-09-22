@@ -373,6 +373,10 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
             <Fact icon={<IconAgentPresetOutline16 />} label={t('agentExecution')} full>
               {executionLabel(task, t)}
             </Fact>
+            <Fact icon={<IconAgentPresetOutline16 />} label={t('reasoningEffort')} full>
+              {task.execution.target?.mode === 'pinned-session'
+                ? t('reasoningSession') : task.execution.reasoningEffort ?? t('reasoningDefault')}
+            </Fact>
             <Fact icon={<IconRightUpOutline16 />} label={t('messageDelivery')} full>
               {task.delivery === undefined ? t('disabled') : <code>{task.delivery.botId} / {task.delivery.targetId}</code>}
             </Fact>

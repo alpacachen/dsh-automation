@@ -29,6 +29,7 @@ export const AutomationExecutionSchema = z.strictObject({
   agentPreset: z.string().min(1).optional(),
   provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  reasoningEffort: z.string().min(1).optional(),
   skills: z.array(z.string().min(1)).default([]),
   target: z.discriminatedUnion('mode', [
     z.strictObject({ mode: z.literal('fresh') }),
@@ -158,12 +159,20 @@ export interface AutomationExecutionPatch {
   readonly agentPreset?: string | null
   readonly provider?: string | null
   readonly model?: string | null
+  readonly reasoningEffort?: string | null
   readonly skills?: readonly string[]
   readonly target?: AutomationExecutionTarget
   readonly sessionTargetConfirmed?: true
 }
 
 export interface AgentConfigurationOptions {
+  readonly reasoning?: {
+    readonly provider: string
+    readonly model: string
+    readonly efforts: readonly { readonly id: string; readonly name: string; readonly description?: string }[]
+    readonly defaultEffort?: string
+    readonly error?: string
+  }
   readonly presets: readonly {
     readonly id: string
     readonly name: string

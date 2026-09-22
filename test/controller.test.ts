@@ -141,6 +141,50 @@ test('controller validates the fully materialized execution before create and up
   assert.deepEqual(await controller.options('task', null), { cwd: '/tmp/workspace', preset: undefined })
 })
 
+test('controller previews saved and candidate reasoning without guessing default routes', async () => {
+  const current = { execution: { cwd: '/w', provider: 'saved', model: 'saved-model', agentPreset: 'standard', skills: [] } }
+  const calls: unknown[][] = []
+  const controller = new AutomationController({ get: () => current } as unknown as AutomationDomain, {} as AutomationScheduler, undefined, {
+    options: async (...args: unknown[]) => { calls.push(args); return {} },
+  } as any)
+  await controller.options('task')
+  await controller.options('task', null, 'candidate', 'unlisted')
+  await controller.options('task', undefined, '', '')
+  Object.assign(current.execution, { target: { mode: 'pinned-session' } })
+  await controller.options('task')
+  assert.deepEqual(calls, [
+    ['/w', 'standard', 'saved', 'saved-model'], ['/w', undefined, 'candidate', 'unlisted'],
+    ['/w', 'standard', '', ''], ['/w', 'standard', undefined, undefined],
+  ])
+})
+
+test('controller preserves effort for revalidation, clears only null, and ignores pinned overrides', async () => {
+  const current = {
+    execution: { cwd: '/w', workspaceId: 'w', provider: 'p', model: 'm', reasoningEffort: 'high', skills: [] },
+    security: { permissionPreset: 'read-only' },
+  }
+  const calls: any[] = []
+  const domain = {
+    create: async (request: unknown) => request,
+    update: async (_id: string, _request: unknown, _now: number, beforeCommit: (current: unknown) => Promise<void>) => { await beforeCommit(current); return current },
+  } as unknown as AutomationDomain
+  const controller = new AutomationController(domain, { requestDrive() {} } as unknown as AutomationScheduler, undefined, {
+    validate: async (execution: unknown) => { calls.push(execution) },
+  } as any)
+  await controller.update('task', { execution: { provider: 'new', model: 'new-model' } })
+  assert.equal(calls[0].reasoningEffort, 'high')
+  await controller.update('task', { execution: { reasoningEffort: null } })
+  assert.equal(Object.hasOwn(calls[1], 'reasoningEffort'), false)
+  const target = { mode: 'pinned-session' as const, sessionId: 's', workspaceId: 'w', cwd: '/w', fallback: 'fail' as const }
+  Object.assign(current.execution, { target })
+  await controller.update('task', { name: 'Rename' })
+  assert.equal(calls[2].reasoningEffort, undefined)
+  assert.equal(calls[2].provider, undefined)
+  await controller.create({ ...createRequest({ kind: 'once', fireAt: '2026-03-21T00:00:00.000Z' }), execution: current.execution, sessionTargetConfirmed: true })
+  assert.equal(calls[3].reasoningEffort, undefined)
+  assert.equal(current.execution.reasoningEffort, 'high')
+})
+
 test('controller preserves a partial legacy model override during unrelated updates', async () => {
   const validations: unknown[] = []
   const current = {

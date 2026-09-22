@@ -3,7 +3,7 @@ import { instant, latestDueOccurrence, nextOccurrence, validateSchedule } from '
 import { AutomationStore } from './store.js'
 import { AutomationDeliverySchema, type AutomationDelivery, type AutomationRunDelivery } from './types.js'
 import { AutomationError } from './errors.js'
-import { assertOverrideId, assertProviderModelPair, applyExecutionPatch, normalizeSkills, validateExecutionPatch, validateTarget } from './validation.js'
+import { assertOverrideId, assertProviderModelPair, applyExecutionPatch, normalizeSkills, validateExecutionPatch, validateReasoningExecution, validateTarget } from './validation.js'
 import type {
   AutomationRun,
   AutomationRunStatus,
@@ -131,6 +131,7 @@ export class AutomationDomain {
     if (!name) throw new Error('Automation name must not be empty.')
     if (!prompt) throw new Error('Automation prompt must not be empty.')
     assertProviderModelPair(request.execution.provider, request.execution.model)
+    validateReasoningExecution(request.execution)
     validateTarget({ ...request.execution, target: request.execution.target ?? { mode: 'fresh' } }, request.sessionTargetConfirmed === true)
     for (const value of [request.execution.agentPreset, request.execution.provider, request.execution.model]) {
       assertOverrideId(value, 'Execution override ids')
@@ -221,6 +222,7 @@ export class AutomationDomain {
           if (task.runs.some(nonTerminal)) throw new AutomationDomainError('invalid_state', 'Message delivery cannot change while an automation has a queued or running run.')
         }
       }
+      validateReasoningExecution(applyExecutionPatch(task.execution, request.execution))
       await beforeCommit?.(structuredClone(task))
       if (delivery === null) delete task.delivery
       else if (delivery !== undefined) task.delivery = delivery

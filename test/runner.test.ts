@@ -178,6 +178,24 @@ function fakeContext(
   return { ctx, order, messages, createdIds, resumedIds, disposed: () => disposed, workspace, emitter }
 }
 
+test('fresh runner forwards only explicit reasoning and pinned runs never apply task overrides', async () => {
+  const fake = fakeContext()
+  const create = fake.ctx.agents.create.bind(fake.ctx.agents)
+  const created: unknown[] = []
+  fake.ctx.agents.create = async (options) => { created.push(options.agentOptions); return create(options) }
+  await new DshAutomationRunner(fake.ctx).run({ ...task, execution: { ...task.execution, reasoningEffort: 'vendor: auto' } }, run)
+  await new DshAutomationRunner(fake.ctx).run(task, run)
+  assert.deepEqual(created, [{ provider: 'provider', model: 'model', reasoningEffort: 'vendor: auto' }, { provider: 'provider', model: 'model' }])
+  const pinned = fakeContext()
+  const restored = await pinned.ctx.agents.resume({ resumeSessionId: SessionId('target-session') })
+  Object.assign(restored.agent, { options: { provider: 'session-provider', model: 'session-model', reasoningEffort: 'session-high' } })
+  pinned.ctx.agents.get = () => restored.agent
+  pinned.ctx.llm.resolveCallConfig = async () => { throw new Error('pinned should not validate task model or effort') }
+  const result = await new DshAutomationRunner(pinned.ctx).run({ ...pinnedTask, execution: { ...pinnedTask.execution, reasoningEffort: 'unsupported' } }, { ...run, sessionId: 'target-session' })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(restored.agent.options, { provider: 'session-provider', model: 'session-model', reasoningEffort: 'session-high' })
+})
+
 test('runner keeps a completed session live for immediate sidebar visibility', async () => {
   const fake = fakeContext()
   const runner = new DshAutomationRunner(fake.ctx)

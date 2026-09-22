@@ -25,6 +25,29 @@ function setup(controller: AutomationController) {
   return { route: () => route!, dispose }
 }
 
+test('HTTP reasoning options preserve candidate identity and patches preserve null versus omission', async () => {
+  const calls: unknown[][] = []
+  const controller = {
+    get: () => ({ security: { permissionPreset: 'read-only' }, execution: {} }),
+    options: async (...args: unknown[]) => { calls.push(args); return {} },
+    update: async (_id: string, request: unknown) => request,
+  } as unknown as AutomationController
+  const route = setup(controller).route()
+  for (const query of ['', '?provider=p&model=m', '?provider=&model=']) {
+    assert.equal((await invoke(route, 'GET', `/api/automation/v1/tasks/task/options${query}`)).status, 200)
+  }
+  assert.deepEqual(calls, [['task', undefined, undefined, undefined], ['task', undefined, 'p', 'm'], ['task', undefined, '', '']])
+  assert.equal((await invoke(route, 'GET', '/api/automation/v1/tasks/task/options?provider=p')).status, 400)
+  const patch = (body: unknown) => invoke(route, 'PATCH', '/api/automation/v1/tasks/task', JSON.stringify(body), { 'x-dsh-automation': '1' })
+  for (const effort of [' vendor: auto ', null]) {
+    const response = await patch({ execution: { reasoningEffort: effort } })
+    assert.equal(response.status, 200)
+    assert.deepEqual(response.value.task.execution, { reasoningEffort: effort })
+  }
+  assert.equal(Object.hasOwn((await patch({ execution: { skills: [] } })).value.task.execution, 'reasoningEffort'), false)
+  for (const effort of ['', 2, false, {}]) assert.equal((await patch({ execution: { reasoningEffort: effort } })).status, 400)
+})
+
 test('HTTP API lists options and manages automations with confirmation and CSRF enforcement', async () => {
   const calls: string[] = []
   const task = { id: 'task-1', security: { permissionPreset: 'danger-full-access' } }
