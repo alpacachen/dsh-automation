@@ -12,6 +12,10 @@
 - Failed runs can be retried manually. Optional auto-pause counts failures and timeouts; success resets the count. A run whose outcome was not recorded before an unexpected restart becomes outcome unknown and is not automatically rerun.
 - Message delivery has its own status. Failed sends never rerun tasks or automatically resend; an interrupted send becomes unknown. Manual cancellation and Host shutdown interruptions do not trigger reports. Platform acceptance does not guarantee receipt on the recipient's device.
 
+## State storage
+
+State is written to a temporary file in the same directory, flushed, and atomically renamed over the previous file. Windows skips directory fsync; other platforms attempt it after the rename. If that post-commit step fails, the Host logs `AUTOMATION_DIRECTORY_SYNC_FAILED`: the operation is already committed and memory follows the new file, but persistence across a system crash or power loss is not guaranteed. Investigate the filesystem warning rather than retrying the operation. Failures before the rename still reject the operation and leave the previous state unchanged.
+
 ## Agent tools and schedule parameter reference
 
 | Tool                 | Purpose                                                                      |

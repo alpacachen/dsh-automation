@@ -1,6 +1,6 @@
 {
   "name": "@alpacachen/dsh-automation",
-  "version": "0.3.27",
+  "version": "0.3.28",
   "description": "Durable agent-created automations for DeepSeek Harness",
   "repository": {
     "type": "git",
@@ -53,14 +53,14 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "rm -rf lib && tsc -p tsconfig.build.json && tsc -p tsconfig.client-build.json && node scripts/build-client.mjs",
+    "build": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && tsc -p tsconfig.client-build.json && node scripts/build-client.mjs",
     "prepare": "npm run build",
     "check": "tsc -p tsconfig.host.json && tsc -p tsconfig.client.json",
     "lint": "eslint src test --max-warnings 0",
     "format": "prettier --write",
     "format:check": "prettier --check",
     "test": "tsx --test test/**/*.test.ts",
-    "test:coverage": "c8 --check-coverage --lines 90 --functions 90 --branches 75 --statements 90 tsx --test test/**/*.test.ts"
+    "test:coverage": "c8 --include \"src/**\" --check-coverage --lines 90 --functions 90 --branches 75 --statements 90 tsx --test test/**/*.test.ts"
   },
   "dependencies": {
     "rrule": "^2.8.1",

@@ -7,12 +7,15 @@
  */
 import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
+import { isAbsolute, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright')
+const playwrightModule = process.env.PLAYWRIGHT_MODULE ?? 'playwright'
+const { chromium } = await import(isAbsolute(playwrightModule) || playwrightModule.startsWith('.')
+  ? pathToFileURL(resolve(playwrightModule)).href : playwrightModule)
 const base = process.env.DSH_TEST_URL ?? 'http://127.0.0.1:3080'
-const output = resolve(process.env.UI_SCREENSHOT_DIR ?? '/tmp/automation-ui-review')
+const output = resolve(process.env.UI_SCREENSHOT_DIR ?? resolve(tmpdir(), 'automation-ui-review'))
 await mkdir(output, { recursive: true })
 const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) })
 const errors = []
