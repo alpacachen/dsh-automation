@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { assertOverrideId, assertProviderModelPair, assertReasoningEffort } from './validation.js'
 import type { AutomationController } from './controller.js'
+import { AutomationDomainError } from './domain.js'
 import { AutomationDeliverySchema, AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
@@ -154,6 +155,27 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
           const botId = url.searchParams.get('botId') ?? undefined
           if (botId !== undefined && (!botId.trim() || botId.length > 256)) throw new Error('Invalid dsh-im bot id.')
           send(res, 200, { options: await controller.deliveryOptions(botId) })
+          return
+        }
+        const runMatch = /^\/tasks\/([^/]+)\/runs\/([^/]+)$/.exec(suffix)
+        if (runMatch !== null) {
+          if (req.method !== 'DELETE') {
+            send(res, 405, { error: 'Method not allowed.' })
+            return
+          }
+          const taskId = decodeURIComponent(runMatch[1]!)
+          const runId = decodeURIComponent(runMatch[2]!)
+          if (![taskId, runId].every((id) => /^[A-Za-z0-9_-]{1,256}$/.test(id))) {
+            throw new Error('Invalid automation task or run id.')
+          }
+          try {
+            send(res, 200, { deleted: await controller.deleteRun(taskId, runId) })
+          } catch (error) {
+            if (!(error instanceof AutomationDomainError)) throw error
+            if (error.code === 'task_not_found') send(res, 404, { error: error.message })
+            else if (error.code === 'run_in_progress') send(res, 409, { error: error.message })
+            else throw error
+          }
           return
         }
         const match = /^\/tasks\/([^/]+)(?:\/(run|pause|resume|stop|options))?$/.exec(suffix)

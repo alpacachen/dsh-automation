@@ -6,7 +6,7 @@ import { AutomationStore } from '../src/store.js'
 import { AutomationTaskSchema } from '../src/types.js'
 import { createRequest, temporaryDirectory } from './helpers.js'
 
-async function setup(t: test.TestContext, maxHistory = 20) {
+async function setup(t: test.TestContext, maxHistory?: number) {
   const directory = await temporaryDirectory()
   t.after(directory.cleanup)
   const store = new AutomationStore(join(directory.path, 'state.json'))
@@ -298,6 +298,42 @@ test('queued run is claimed, completed, and persisted with session id', async (t
   })
 })
 
+for (const maxHistory of [undefined, 5]) {
+  test(`run history survives restart with ${maxHistory ?? 'unlimited default'} retention`, async (t) => {
+    const { domain, store } = await setup(t, maxHistory)
+    const start = Date.parse('2026-03-20T00:00:00.000Z')
+    const task = await domain.create(createRequest(daily), start)
+    const ids: string[] = []
+    let now = start
+    for (let index = 0; index < 30; index++) {
+      now = start + (index + 1) * 86_400_000
+      const run = index % 2 === 0
+        ? (await domain.claimDue(now))[0]!
+        : await domain.runNow(task.id, now)
+      ids.push(run.id)
+      await domain.takeNextQueued(now + 1)
+      await domain.finishRun(task.id, run.id, { status: 'succeeded', summary: `Result ${index}` }, now + 2)
+    }
+    const retainedIds = () => maxHistory === undefined ? ids : ids.slice(-maxHistory)
+    assert.deepEqual(domain.get(task.id).runs.map((run) => run.id), retainedIds())
+    const saved = new AutomationStore(store.path)
+    await saved.init()
+    assert.deepEqual(saved.snapshot().tasks[task.id]!.runs, domain.get(task.id).runs)
+
+    // Exercise restart recovery, which also invokes history pruning.
+    const pending = await domain.runNow(task.id, now + 3)
+    ids.push(pending.id)
+    await domain.takeNextQueued(now + 4)
+    const restored = new AutomationDomain(new AutomationStore(store.path), maxHistory)
+    await restored.init(now + 5)
+    assert.deepEqual(restored.get(task.id).runs.map((run) => run.id), retainedIds())
+    assert.equal(restored.get(task.id).runs.at(-1)?.status, 'outcome_unknown')
+    const reloaded = new AutomationStore(store.path)
+    await reloaded.init()
+    assert.deepEqual(reloaded.snapshot().tasks[task.id]!.runs, restored.get(task.id).runs)
+  })
+}
+
 test('restart marks running work outcome unknown but leaves queued work recoverable', async (t) => {
   const directory = await temporaryDirectory()
   t.after(directory.cleanup)
@@ -318,6 +354,114 @@ test('restart marks running work outcome unknown but leaves queued work recovera
   assert.match(restoredRun?.error ?? '', /may have completed/)
   assert.equal(restored.get(runningTask.id).unreadNotifications, 1)
   assert.equal(restored.get(queuedTask.id).runs.at(-1)?.status, 'queued')
+})
+
+test('deleteRun removes every terminal status, preserves task fields and foreign runs, and persists across restart', async (t) => {
+  const { domain, store } = await setup(t)
+  const now = Date.parse('2026-03-20T00:00:00.000Z')
+  const task = await domain.create(createRequest(daily), now)
+  const other = await domain.create(createRequest(daily, 'Other'), now)
+  const foreign = await domain.runNow(other.id, now)
+  const statuses = ['succeeded', 'failed', 'timed_out', 'canceled', 'interrupted', 'outcome_unknown'] as const
+  await store.mutate((state) => {
+    const current = state.tasks[task.id]!
+    current.consecutiveFailures = 2
+    current.unreadNotifications = 3
+    current.runs = statuses.map((status, index) => ({
+      id: `terminal-${status}`, trigger: 'manual', enqueuedAt: task.createdAt, status,
+      sessionId: 'shared-session', executionTarget: { mode: 'pinned-session', sessionId: 'shared-session' },
+      delivery: { botId: 'bot', targetId: 'target', status: (['sent', 'failed', 'unknown'] as const)[index % 3]!, attemptedAt: task.createdAt },
+    }))
+  })
+  // An active sibling must not prevent removal of finished runs.
+  const queued = await domain.runNow(task.id, now)
+  const before = domain.get(task.id)
+  const otherBefore = domain.get(other.id)
+  assert.equal(await domain.deleteRun(task.id, foreign.id), false)
+  assert.equal(await domain.deleteRun(task.id, 'missing'), false)
+  for (const status of statuses) {
+    assert.equal(await domain.deleteRun(task.id, `terminal-${status}`), true)
+    assert.equal(await domain.deleteRun(task.id, `terminal-${status}`), false)
+  }
+  const expected = { ...before, runs: before.runs.filter((run) => run.id === queued.id) }
+  assert.deepEqual(domain.get(task.id), expected)
+  assert.deepEqual(domain.get(other.id), otherBefore)
+  for (const id of ['missing', '__proto__', 'constructor']) {
+    await assert.rejects(domain.deleteRun(id, queued.id), (error: unknown) => error instanceof AutomationDomainError && error.code === 'task_not_found')
+  }
+  const restored = new AutomationDomain(new AutomationStore(store.path))
+  await restored.init(now + 1)
+  assert.deepEqual(restored.get(task.id), expected)
+  assert.deepEqual(restored.get(other.id), otherBefore)
+})
+
+test('deleteRun rejects queued, running, and sending records without changing persisted state', async (t) => {
+  const { domain, store } = await setup(t)
+  const now = Date.parse('2026-03-20T00:00:00.000Z')
+  const task = await domain.create(createRequest(daily), now)
+  const queued = await domain.runNow(task.id, now)
+  for (const status of ['queued', 'running', 'succeeded'] as const) {
+    await store.mutate((state) => {
+      const run = state.tasks[task.id]!.runs[0]!
+      run.status = status
+      if (status === 'succeeded') run.delivery = { botId: 'bot', targetId: 'target', status: 'sending', attemptedAt: task.createdAt }
+    })
+    const before = store.snapshot()
+    await assert.rejects(domain.deleteRun(task.id, queued.id), (error: unknown) => error instanceof AutomationDomainError && error.code === 'run_in_progress')
+    assert.deepEqual(store.snapshot(), before)
+    const disk = new AutomationStore(store.path)
+    await disk.init()
+    assert.deepEqual(disk.snapshot(), before)
+  }
+})
+
+test('deleteRun write failure preserves both memory and disk', async (t) => {
+  const { domain, store } = await setup(t)
+  const now = Date.parse('2026-03-20T00:00:00.000Z')
+  const task = await domain.create(createRequest(daily), now)
+  const queued = await domain.runNow(task.id, now)
+  await domain.cancelQueuedRun(task.id, queued.id, now)
+  const failing = new AutomationDomain(new AutomationStore(store.path, async () => { throw new Error('disk full') }))
+  await failing.init(now)
+  const before = failing.store.snapshot()
+  await assert.rejects(failing.deleteRun(task.id, queued.id), /disk full/)
+  assert.deepEqual(failing.store.snapshot(), before)
+  const disk = new AutomationStore(store.path)
+  await disk.init()
+  assert.deepEqual(disk.snapshot(), before)
+})
+
+test('deleteRun checks state within the serialized mutation and cannot race delivery or task deletion', async (t) => {
+  const { domain, store } = await setup(t)
+  const now = Date.parse('2026-03-20T00:00:00.000Z')
+  const task = await domain.create(createRequest(daily), now)
+  const queued = await domain.runNow(task.id, now)
+  await domain.cancelQueuedRun(task.id, queued.id, now)
+  let release!: () => void
+  let entered!: () => void
+  const started = new Promise<void>((resolve) => { entered = resolve })
+  const blocked = new Promise<void>((resolve) => { release = resolve })
+  const sending = { botId: 'bot', targetId: 'target', status: 'sending' as const, attemptedAt: task.createdAt }
+  const transition = store.mutate(async (state) => {
+    entered()
+    await blocked
+    state.tasks[task.id]!.runs[0]!.delivery = sending
+  })
+  await started
+  const rejected = assert.rejects(domain.deleteRun(task.id, queued.id), (error: unknown) => error instanceof AutomationDomainError && error.code === 'run_in_progress')
+  release()
+  await transition
+  await rejected
+  assert.equal(domain.get(task.id).runs[0]?.delivery?.status, 'sending')
+  const finishing = domain.finishDelivery(task.id, queued.id, { ...sending, status: 'sent' })
+  const first = domain.deleteRun(task.id, queued.id)
+  const second = domain.deleteRun(task.id, queued.id)
+  await finishing
+  assert.deepEqual(await Promise.all([first, second]), [true, false])
+  const deletingTask = domain.delete(task.id)
+  const missingTask = assert.rejects(domain.deleteRun(task.id, queued.id), (error: unknown) => error instanceof AutomationDomainError && error.code === 'task_not_found')
+  await deletingTask
+  await missingTask
 })
 
 test('delete is idempotent and removes future scheduling', async (t) => {

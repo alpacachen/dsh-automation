@@ -114,6 +114,8 @@
 .am-run-facts dt { color:var(--dsw-alias-label-tertiary); font:var(--dsw-font-xs-13); }
 .am-run-facts dd { min-width:0; margin:0; font:var(--dsw-font-xs-13); overflow-wrap:anywhere; }
 .am-run-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.am-run-delete-confirm { display:flex; flex-direction:column; gap:12px; }
+.am-run-delete-context { display:flex; flex-wrap:wrap; align-items:center; gap:12px; color:var(--dsw-alias-label-secondary); font:var(--dsw-font-xs-13); }
 
 /* Editor: task and schedule first, secondary controls on demand. */
 .am-editor { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; }

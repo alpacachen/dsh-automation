@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AutomationController } from '../src/controller.js'
 import { registerAutomationApi } from '../src/api.js'
+import { AutomationDomainError } from '../src/domain.js'
 
 type Route = { handler: (req: any, res: any) => Promise<void> }
 
@@ -24,6 +25,58 @@ function setup(controller: AutomationController) {
   const dispose = registerAutomationApi(ctx, controller)
   return { route: () => route!, dispose }
 }
+
+test('run deletion returns precise results and route-specific conflict/not-found errors', async () => {
+  const calls: string[][] = []
+  let exists = true
+  const controller = {
+    deleteRun: async (taskId: string, runId: string) => {
+      calls.push([taskId, runId])
+      if (taskId === 'missing') throw new AutomationDomainError('task_not_found', 'Task not found')
+      if (runId === 'active' || runId === 'sending') throw new AutomationDomainError('run_in_progress', 'Run is active')
+      if (runId === 'broken') throw new Error('Write failed')
+      const deleted = runId === 'run-1' && exists
+      if (deleted) exists = false
+      return deleted
+    },
+  } as unknown as AutomationController
+  const route = setup(controller).route()
+  const headers = { 'x-dsh-automation': '1', origin: 'http://localhost' }
+  const remove = (taskId: string, runId: string) => invoke(route, 'DELETE', `/api/automation/v1/tasks/${taskId}/runs/${runId}`, undefined, headers)
+  assert.deepEqual(await remove('task-1', 'run%2D1'), { status: 200, value: { deleted: true } })
+  for (const id of ['run-1', 'missing', 'foreign']) {
+    assert.deepEqual(await remove('task-1', id), { status: 200, value: { deleted: false } })
+  }
+  assert.deepEqual(await remove('missing', 'run-1'), { status: 404, value: { error: 'Task not found' } })
+  for (const id of ['active', 'sending']) {
+    assert.deepEqual(await remove('task-1', id), { status: 409, value: { error: 'Run is active' } })
+  }
+  assert.deepEqual(await remove('task-1', 'broken'), { status: 400, value: { error: 'Write failed' } })
+  assert.deepEqual(calls[0], ['task-1', 'run-1'])
+})
+
+test('run deletion validates origin, header, method, path, and decoded IDs before delegation', async () => {
+  const route = setup({ deleteRun: async () => assert.fail('Invalid requests must not delete a record') } as unknown as AutomationController).route()
+  const path = '/api/automation/v1/tasks/task-1/runs/run-1'
+  const headers = { 'x-dsh-automation': '1' }
+  assert.equal((await invoke(route, 'DELETE', path)).status, 403)
+  assert.equal((await invoke(route, 'DELETE', path, undefined, { 'x-dsh-automation': '0' })).status, 403)
+  for (const origin of ['https://evil.example', 'null', 'not a URL']) {
+    assert.equal((await invoke(route, 'DELETE', path, undefined, { ...headers, origin })).status, 403)
+  }
+  for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'HEAD']) {
+    assert.equal((await invoke(route, method, path, undefined, headers)).status, 405)
+  }
+  for (const invalid of ['%', '%2F', '%5C', '%00', '%20', '%252F', 'x'.repeat(257)]) {
+    for (const url of [`/api/automation/v1/tasks/${invalid}/runs/run-1`, `/api/automation/v1/tasks/task-1/runs/${invalid}`]) {
+      assert.equal((await invoke(route, 'DELETE', url, undefined, headers)).status, 400)
+    }
+  }
+  for (const invalidPath of [
+    '/api/automation/v1/tasks//runs/run-1', '/api/automation/v1/tasks/task-1/runs/',
+    `${path}/extra`, `${path}/`, '/api/automation/v1/tasks/task-1/runs',
+  ]) assert.equal((await invoke(route, 'DELETE', invalidPath, undefined, headers)).status, 404)
+})
 
 test('HTTP reasoning options preserve candidate identity and patches preserve null versus omission', async () => {
   const calls: unknown[][] = []

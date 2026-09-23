@@ -81,7 +81,7 @@ function pruneRuns(task: AutomationTask, maxHistory: number): void {
 export class AutomationDomain {
   constructor(
     readonly store: AutomationStore,
-    readonly maxRunHistory = 20,
+    readonly maxRunHistory = Infinity,
   ) {}
 
   async init(now: number): Promise<void> {
@@ -267,6 +267,21 @@ export class AutomationDomain {
       delete state.tasks[id]
     })
     return true
+  }
+
+  async deleteRun(taskId: string, runId: string): Promise<boolean> {
+    return this.store.mutate((state) => {
+      const task = Object.hasOwn(state.tasks, taskId) ? state.tasks[taskId] : undefined
+      if (task === undefined) throw new AutomationDomainError('task_not_found', `Automation ${taskId} was not found.`)
+      const index = task.runs.findIndex((run) => run.id === runId)
+      if (index === -1) return false
+      const run = task.runs[index]!
+      if (nonTerminal(run) || run.delivery?.status === 'sending') {
+        throw new AutomationDomainError('run_in_progress', 'A queued, running, or sending run cannot be deleted.')
+      }
+      task.runs.splice(index, 1)
+      return true
+    })
   }
 
   async markNotificationsRead(): Promise<void> {

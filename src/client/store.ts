@@ -45,6 +45,7 @@ let snapshot: AutomationSnapshot = { tasks: [], scheduler: undefined, unread: 0,
 const listeners = new Set<() => void>()
 let timer: number | undefined
 let inflight: Promise<void> | undefined
+let mutationRevision = 0
 let loaded = false
 let panelOpen = false
 
@@ -57,10 +58,12 @@ function emit(next: AutomationSnapshot): void {
 export function refresh(): Promise<void> {
   if (inflight !== undefined) return inflight
   const first = !loaded
+  const revision = mutationRevision
   if (first) emit({ ...snapshot, loading: true })
   inflight = (async () => {
     try {
       const value = await request('/tasks') as { tasks: AutomationTaskView[]; scheduler: AutomationSchedulerHealth }
+      if (revision !== mutationRevision) return
       loaded = true
       emit({
         tasks: value.tasks,
@@ -81,6 +84,20 @@ export function refresh(): Promise<void> {
     }
   })()
   return inflight
+}
+
+/** Publish a confirmed deletion without waiting for an unrelated poll. */
+export async function deleteRunRecord(taskId: string, runId: string): Promise<void> {
+  await request(`/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' })
+  // Invalidate older polls so their responses cannot resurrect this record.
+  mutationRevision += 1
+  emit({
+    ...snapshot,
+    tasks: snapshot.tasks.map((task) => task.id === taskId
+      ? { ...task, runs: task.runs.filter((run) => run.id !== runId) }
+      : task),
+  })
+  void refresh()
 }
 
 function reschedule(): void {

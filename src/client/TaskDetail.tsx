@@ -105,16 +105,19 @@ const RETRYABLE = ['failed', 'timed_out', 'interrupted', 'outcome_unknown']
  * One run in the history list: collapsed to a single scannable line, expanded
  * to every field the API records for it.
  */
-function RunRow({ run, locale, t, disabled, onRetry, onOpen }: {
+function RunRow({ run, locale, t, disabled, pending, onRetry, onOpen, onDelete }: {
   run: AutomationTaskView['runs'][number]
   locale: string
   t: typeof translate
   disabled: boolean
+  pending: boolean
   onRetry: () => void
   onOpen: (sessionId: SessionId) => void
+  onDelete: (trigger: HTMLButtonElement) => void
 }) {
   const [open, setOpen] = React.useState(false)
   const duration = formatRunDuration(run.startedAt, run.finishedAt, locale)
+  const deleteBlocked = run.status === 'queued' || run.status === 'running' || run.delivery?.status === 'sending'
   return (
     <DisclosureRow
       className="am-run"
@@ -188,6 +191,14 @@ function RunRow({ run, locale, t, disabled, onRetry, onOpen }: {
               {t('open')}
             </Button>
           )}
+          <span className="am-spacer" />
+          <Tooltip label={t('deleteRunBlocked')} disabled={!deleteBlocked} side="top">
+            <span>
+              <Button type="button" variant="ghost" size="sm" data-am-delete-run={run.id} disabled={pending || deleteBlocked} onClick={(event) => onDelete(event.currentTarget)}>
+                {t('deleteRun')}
+              </Button>
+            </span>
+          </Tooltip>
         </div>
       </div>
     </DisclosureRow>
@@ -202,6 +213,7 @@ export interface TaskDetailActions {
   resume: (runNow: boolean) => void
   edit: () => void
   requestDelete: () => void
+  requestDeleteRun: (run: AutomationTaskView['runs'][number], trigger: HTMLButtonElement) => void
   openSession: (sessionId: SessionId) => void
   back: () => void
 }
@@ -324,7 +336,7 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
 
         <nav className="am-detail-nav" aria-label={t('details')}>
           {(['overview', 'runHistory', 'configuration'] as const).map((id) => (
-            <button key={id} type="button" className={view === id ? 'am-tab is-active' : 'am-tab'} aria-pressed={view === id} onClick={() => setView(id)}>
+            <button key={id} type="button" data-am-view={id} className={view === id ? 'am-tab is-active' : 'am-tab'} aria-pressed={view === id} onClick={() => setView(id)}>
               {t(id)}{id === 'runHistory' && task.runs.length > 0 && <span>{task.runs.length}</span>}
             </button>
           ))}
@@ -431,8 +443,10 @@ export function TaskDetail({ task, locale, t, pending, actions }: {
                   locale={locale}
                   t={t}
                   disabled={disabled}
+                  pending={pending}
                   onRetry={actions.run}
                   onOpen={actions.openSession}
+                  onDelete={(trigger) => actions.requestDeleteRun(run, trigger)}
                 />
               ))}
             </div>

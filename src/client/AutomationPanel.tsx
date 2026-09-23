@@ -25,9 +25,10 @@ import { SchedulerHealth } from './SchedulerHealth.js'
 import { TaskRow } from './TaskRow.js'
 import { TaskDetail, type TaskDetailActions } from './TaskDetail.js'
 import { TaskEditor, type TaskUpdateBody } from './TaskEditor.js'
-import { StatusTag } from './shared.js'
+import { formatDate, StatusTag } from './shared.js'
 import {
   clearError,
+  deleteRunRecord,
   queueDraft,
   refresh,
   reportError,
@@ -70,6 +71,10 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
   const [actingTaskId, setActingTaskId] = React.useState<string>()
   const [editing, setEditing] = React.useState(false)
   const [deletingId, setDeletingId] = React.useState<string>()
+  const [deletingRun, setDeletingRun] = React.useState<{ taskId: string; run: AutomationTaskView['runs'][number] }>()
+  const [deleteRunError, setDeleteRunError] = React.useState<string>()
+  const deletingRunPending = React.useRef(false)
+  const deleteRunFocus = React.useRef<HTMLElement | null>(null)
   const [creatingExampleId, setCreatingExampleId] = React.useState<string>()
   const [narrowDetail, setNarrowDetail] = React.useState(false)
   const [dirty, setDirty] = React.useState(false)
@@ -85,6 +90,43 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
   const panelRef = React.useRef<HTMLElement | null>(null)
   const restoreFocusRef = React.useRef<HTMLElement | null>(null)
   const wasEditing = React.useRef(false)
+
+  React.useEffect(() => {
+    if (deletingRun !== undefined || deleteRunFocus.current === null) return
+    const trigger = deleteRunFocus.current
+    deleteRunFocus.current = null
+    const frame = window.requestAnimationFrame(() => {
+      const target = trigger.isConnected && !trigger.hasAttribute('disabled')
+        ? trigger : panelRef.current?.querySelector<HTMLElement>('[data-am-view="runHistory"]')
+      target?.focus()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [deletingRun])
+
+  React.useEffect(() => {
+    if (deletingRun === undefined) return
+    const dialog = document.querySelector<HTMLElement>('.am-run-delete-modal')
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (!deletingRunPending.current) setDeletingRun(undefined)
+        return
+      }
+      if (event.key !== 'Tab' || dialog === null) return
+      const buttons = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+      const first = buttons[0]
+      const last = buttons.at(-1)
+      const focusIsEnabled = buttons.some((button) => button === document.activeElement)
+      if (!focusIsEnabled) { event.preventDefault(); (event.shiftKey ? last : first)?.focus() }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+    }
+    // Host Modal supplies the surface; contain its keyboard events here so the
+    // same Escape cannot close the underlying panel after React commits.
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [deletingRun])
 
   React.useEffect(() => {
     const changed = editing !== wasEditing.current
@@ -133,6 +175,8 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
       setDirty(false)
       setLeaveAction(null)
       setDeletingId(undefined)
+      setDeletingRun(undefined)
+      setDeleteRunError(undefined)
       setNarrowDetail(false)
       return
     }
@@ -141,14 +185,14 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
       // Portaled menus and confirmation dialogs own their keyboard events.
       if (!panelRef.current?.contains(event.target as Node)) return
       if (event.key === 'Escape') {
-        if (saving || leaveAction !== null || deletingId !== undefined) return
+        if (saving || leaveAction !== null || deletingId !== undefined || deletingRun !== undefined) return
         event.preventDefault()
         if (editing) cancelEditing()
         else if (narrowDetail) setNarrowDetail(false)
         else closePanel()
         return
       }
-      if (editing || deletingId !== undefined || leaveAction !== null) return
+      if (editing || deletingId !== undefined || deletingRun !== undefined || leaveAction !== null) return
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
       const active = document.activeElement
       if (!(active instanceof HTMLElement) || !active.classList.contains('am-row')) return
@@ -165,7 +209,7 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, editing, deletingId, narrowDetail, visible, selectedId, saving, leaveAction, cancelEditing, closePanel])
+  }, [open, editing, deletingId, deletingRun, narrowDetail, visible, selectedId, saving, leaveAction, cancelEditing, closePanel])
 
   React.useEffect(() => {
     if (!open) {
@@ -222,6 +266,26 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
     }
   }, [])
 
+  const confirmDeleteRun = async () => {
+    if (deletingRun === undefined || deletingRunPending.current || saving) return
+    deletingRunPending.current = true
+    setActingTaskId(deletingRun.taskId)
+    setDeleteRunError(undefined)
+    try {
+      await deleteRunRecord(deletingRun.taskId, deletingRun.run.id)
+      setDeletingRun(undefined)
+    } catch (reason) {
+      setDeleteRunError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      deletingRunPending.current = false
+      setActingTaskId(undefined)
+    }
+  }
+
+  const closeDeleteRun = () => {
+    if (!deletingRunPending.current) setDeletingRun(undefined)
+  }
+
   const updateTask = React.useCallback(async (taskId: string, body: TaskUpdateBody) => {
     try {
       setActingTaskId(taskId)
@@ -270,6 +334,11 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
     resume: (runNow: boolean) => void act(selected.id, `/tasks/${encodeURIComponent(selected.id)}/resume`, { method: 'POST', body: JSON.stringify({ runNow }) }),
     edit: () => { setDirty(false); setEditing(true) },
     requestDelete: () => setDeletingId(selected.id),
+    requestDeleteRun: (run, trigger) => {
+      deleteRunFocus.current = trigger
+      setDeleteRunError(undefined)
+      setDeletingRun({ taskId: selected.id, run })
+    },
     openSession,
     back: () => setNarrowDetail(false),
   }
@@ -288,7 +357,7 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
       className="am-overlay"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && leaveAction === null && deletingId === undefined) closePanel()
+        if (event.target === event.currentTarget && leaveAction === null && deletingId === undefined && deletingRun === undefined) closePanel()
       }}
     >
       <section
@@ -474,6 +543,30 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
           }}>{t('discardChanges')}</Button>
         </>}
       />
+      <Modal
+        open={deletingRun !== undefined}
+        className="am-run-delete-modal"
+        onClose={closeDeleteRun}
+        title={t('deleteRunTitle')}
+        closeLabel={t('close')}
+        description={t('deleteRunConfirm')}
+        footer={<>
+          <Button type="button" variant="ghost" size="sm" autoFocus disabled={saving} onClick={closeDeleteRun}>{t('cancel')}</Button>
+          <Button type="button" variant="primary" size="sm" icon={<IconWarningOutline16 />} data-am-confirm-delete-run disabled={saving} onClick={() => void confirmDeleteRun()}>
+            {saving ? t('deletingRun') : t('deleteRun')}
+          </Button>
+        </>}
+      >
+        {deletingRun !== undefined && <div className="am-run-delete-confirm">
+          <div className="am-run-delete-context">
+            <StatusTag status={deletingRun.run.status} t={t} />
+            <time dateTime={deletingRun.run.startedAt ?? deletingRun.run.enqueuedAt}>
+              {formatDate(deletingRun.run.startedAt ?? deletingRun.run.enqueuedAt, locale)}
+            </time>
+          </div>
+          {deleteRunError !== undefined && <p className="am-alert is-error" role="alert">{t('deleteRunFailed', { error: deleteRunError })}</p>}
+        </div>}
+      </Modal>
       <Modal
         open={deletingTask !== undefined}
         onClose={() => setDeletingId(undefined)}
