@@ -44,6 +44,7 @@ export const inject = [
 
 export interface Config {
   readonly root?: string
+  /** Run history is unlimited unless an explicit limit is configured. */
   readonly maxRunHistory?: number
   readonly maxRunDurationMs?: number
 }
@@ -58,7 +59,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   ctx.permissionPresets.resolve(ctx.permissionPresets.defaultPreset)
 
   const store = new AutomationStore(join(root, 'state.json'))
-  const domain = new AutomationDomain(store, config.maxRunHistory ?? 20)
+  const domain = new AutomationDomain(store, config.maxRunHistory)
   await domain.init(Date.now())
   const agentConfiguration = new AgentConfiguration(ctx)
   const runner = new DshAutomationRunner(ctx, agentConfiguration)

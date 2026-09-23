@@ -82,6 +82,27 @@ test('controller does not wake scheduler for idempotent delete miss', async () =
   assert.equal(drives, 0)
 })
 
+test('controller delegates run deletion results and errors without waking or canceling the scheduler', async () => {
+  const calls: string[][] = []
+  const failure = new Error('run is active')
+  const domain = {
+    deleteRun: async (taskId: string, runId: string) => {
+      calls.push([taskId, runId])
+      if (runId === 'active') throw failure
+      return runId === 'finished'
+    },
+  } as unknown as AutomationDomain
+  const scheduler = {
+    requestDrive: () => assert.fail('Deletion must not wake the scheduler'),
+    cancelRun: () => assert.fail('Deletion must not cancel a run'),
+  } as unknown as AutomationScheduler
+  const controller = new AutomationController(domain, scheduler)
+  assert.equal(await controller.deleteRun('task', 'finished'), true)
+  assert.equal(await controller.deleteRun('task', 'missing'), false)
+  await assert.rejects(controller.deleteRun('task', 'active'), (error: unknown) => error === failure)
+  assert.deepEqual(calls, [['task', 'finished'], ['task', 'missing'], ['task', 'active']])
+})
+
 test('controller stops queued and running work through their owning layer', async () => {
   const calls: string[] = []
   let status: 'queued' | 'running' = 'queued'

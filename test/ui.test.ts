@@ -129,6 +129,17 @@ test('protects unsaved edits and restricts arrow navigation to task rows', async
   assert.match(client, /sequence === optionsRequestSequence\.current/)
 })
 
+test('run deletion uses a separate confirmation and does not block finished rows when the task is busy', async () => {
+  const detail = await readFile(new URL('TaskDetail.tsx', clientDir), 'utf8')
+  const panel = await readFile(new URL('AutomationPanel.tsx', clientDir), 'utf8')
+  assert.match(detail, /disabled=\{pending \|\| deleteBlocked\}/)
+  assert.match(detail, /run\.status === 'queued' \|\| run\.status === 'running' \|\| run\.delivery\?\.status === 'sending'/)
+  assert.match(panel, /data-am-confirm-delete-run disabled=\{saving\}/)
+  assert.match(panel, /title=\{t\('deleteRunTitle'\)\}/)
+  assert.match(panel, /role="alert">\{t\('deleteRunFailed'/)
+  assert.match(panel, /deletingRunPending\.current/)
+})
+
 test('renders every field the task carries', async () => {
   const client = await readClient()
 

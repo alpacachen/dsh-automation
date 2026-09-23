@@ -18,7 +18,15 @@ For fresh sessions, open **Edit → Agent execution**, choose a provider, then u
 
 For Agent tools, query `automation_options` with the candidate `provider` and `model` (or an existing task `id`) before using `reasoning_effort`. An explicit level requires a concrete provider/model pair and is validated by the Host before saving and running. Omit it on creation for the default, omit it on update to preserve the saved value, or pass `null` on update to clear it. HTTP updates use `execution.reasoningEffort`. When changing models through tools/API, also clear or replace an incompatible level. Pinned sessions always use their own reasoning configuration; task-level overrides apply only to fresh sessions.
 
+## Manually delete run records
+
+Expand a record in **Run history**, choose **Delete record**, and confirm. This removes only that record and its summary, error, and delivery status. It does not delete the session, recall messages, or change the task schedule, consecutive failure count, or paused state. Deletion cannot be undone.
+
+Queued or running records and records whose messages are still sending cannot be deleted. Other finished records remain deletable while the task is running. Deleting the latest record makes the overview show the latest remaining result; deleting every record shows **No run records**.
+
 ## State storage
+
+Run history is retained without a count limit by default. An explicit plugin `maxRunHistory` setting still limits retention. Previously pruned records cannot be restored by changing this setting.
 
 State is written to a temporary file in the same directory, flushed, and atomically renamed over the previous file. Windows skips directory fsync; other platforms attempt it after the rename. If that post-commit step fails, the Host logs `AUTOMATION_DIRECTORY_SYNC_FAILED`: the operation is already committed and memory follows the new file, but persistence across a system crash or power loss is not guaranteed. Investigate the filesystem warning rather than retrying the operation. Failures before the rename still reject the operation and leave the previous state unchanged.
 

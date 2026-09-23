@@ -40,8 +40,11 @@ let tasks = [
 ]
 tasks[0].runs[0].delivery = { botId: 'bot-alpha', targetId: 'report', status: 'failed', attemptedAt: instant(-86339000), finishedAt: instant(-86338000), error: 'Fixture bot offline' }
 let listError = false
+let listGate
 let optionError = false
 let deliveryError = false
+let deleteRunError = false
+let deleteRunGate
 let deliveryAvailable = true
 const deliveryReads = []
 const deliveryGates = new Map()
@@ -94,9 +97,30 @@ try {
       await reasoningGates.get(model)
       return route.fulfill({ status: optionError ? 503 : 200, json: optionError ? { error: 'Fixture options unavailable' } : { options: { ...options, reasoning } } })
     }
-    if (method === 'GET' && path === '/tasks') return route.fulfill({ status: listError ? 503 : 200, json: listError ? { error: 'Fixture connection unavailable' } : { tasks, scheduler: { status: 'healthy', consecutiveFailures: 0 } } })
+    if (method === 'GET' && path === '/tasks') {
+      const gate = listGate
+      listGate = undefined
+      const status = listError ? 503 : 200
+      // Snapshot before delaying: this response must remain stale after DELETE.
+      const json = listError ? { error: 'Fixture connection unavailable' } : { tasks: structuredClone(tasks), scheduler: { status: 'healthy', consecutiveFailures: 0 } }
+      gate?.started(route.request())
+      await gate?.pending
+      return route.fulfill({ status, json })
+    }
     writes.push({ path, method, body: route.request().postDataJSON() })
     const task = tasks.find((item) => path.split('/')[2] === item.id)
+    const runDelete = /^\/tasks\/([^/]+)\/runs\/([^/]+)$/.exec(path)
+    if (method === 'DELETE' && runDelete) {
+      await deleteRunGate
+      if (deleteRunError) return route.fulfill({ status: 503, json: { error: 'Fixture record deletion failed' } })
+      if (!task) return route.fulfill({ status: 404, json: { error: 'Fixture task not found' } })
+      const run = task.runs.find((entry) => entry.id === decodeURIComponent(runDelete[2]))
+      if (run && (['queued', 'running'].includes(run.status) || run.delivery?.status === 'sending')) {
+        return route.fulfill({ status: 409, json: { error: 'Fixture run is still active' } })
+      }
+      task.runs = task.runs.filter((entry) => entry !== run)
+      return route.fulfill({ json: { deleted: run !== undefined } })
+    }
     if (method === 'PATCH' && task) {
       const { execution, confirmSessionTargetChange, delivery, confirmDeliveryChange, ...patch } = route.request().postDataJSON()
       Object.assign(task, patch)
@@ -113,7 +137,7 @@ try {
         for (const key of ['agentPreset', 'provider', 'model', 'reasoningEffort']) if (execution[key] === null) delete task.execution[key]
       }
     }
-    if (method === 'DELETE') tasks = tasks.filter((item) => item !== task)
+    if (method === 'DELETE' && /^\/tasks\/[^/]+$/.test(path)) tasks = tasks.filter((item) => item !== task)
     if (method === 'POST' && task && path.endsWith('/pause')) { task.status = 'paused'; task.nextRunAt = null }
     if (method === 'POST' && task && path.endsWith('/resume')) { task.status = 'active'; task.nextRunAt = instant(3600000) }
     return route.fulfill({ json: { ok: true } })
@@ -208,6 +232,7 @@ try {
         { id: 'fixture-archived', displayTitle: 'Archived conversation', cwd: '/preview/project', running: false },
       ].map((row) => ({ ...row, blank: false, updatedAt: Date.now() }))
       sessionSnapshot = { current: 'fixture-current', phase: 'ready', ids: sessionRows.map((row) => row.id), byId: Object.fromEntries(sessionRows.map((row) => [row.id, row])) }
+      window.__automationSessionIds = () => [...sessionSnapshot.ids]
       const subscribeSessions = (listener) => { sessionListeners.add(listener); return () => sessionListeners.delete(listener) }
       const getSessions = () => sessionSnapshot
       function SidebarFixture() {
@@ -381,6 +406,212 @@ try {
   assert.equal(await page.locator('.am-run').getByRole('button', { name: 'Retry', exact: true }).count(), 0, 'Delivery failure never offers rerunning a succeeded task')
   await assertTypography()
   await page.screenshot({ path: `${output}/history.png` })
+  // Single-run deletion exercises the actual UI, but only this in-memory task.
+  const historyTask = tasks[0]
+  const savedHistory = structuredClone(historyTask.runs)
+  const taskWithoutRuns = ({ runs: _runs, ...task }) => structuredClone(task)
+  const unchangedTask = taskWithoutRuns(historyTask)
+  const unchangedSessions = await page.evaluate(() => window.__automationSessionIds())
+  const oldRun = { ...structuredClone(savedHistory[0]), id: 'fixture-old-run', sessionId: 'fixture-old-session',
+    enqueuedAt: instant(-172800000), startedAt: instant(-172800000), finishedAt: instant(-172740000), summary: 'Previous run retained as overview fallback.' }
+  const deleteRequests = () => writes.filter((write) => write.method === 'DELETE' && /\/runs\//.test(write.path))
+  const deleteDialog = page.getByRole('dialog', { name: 'Delete this run record?', exact: true })
+  const deleteConfirm = page.locator('[data-am-confirm-delete-run]')
+  const deleteButton = (id) => page.locator(`[data-am-delete-run="${id}"]`)
+  const waitForFocus = async (selector) => {
+    try {
+      await page.waitForFunction((selector) => document.activeElement?.matches(selector), selector, { timeout: 5000 })
+    } catch (error) {
+      // This page contains only fixture data; never dump cookies or boot config.
+      const diagnostics = await page.evaluate((selector) => {
+        const expected = document.querySelector(selector)
+        const visible = (element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'
+        return { selector, activeElement: document.activeElement?.outerHTML.slice(0, 2000),
+          panelExists: document.querySelector('.am-panel') !== null,
+          expected: expected ? { outerHTML: expected.outerHTML, disabled: expected.matches(':disabled'), visible: visible(expected) } : null,
+          visibleDialogs: [...document.querySelectorAll('[role="dialog"],dialog')].filter(visible).map((dialog) => ({
+            label: dialog.getAttribute('aria-label'), labelledBy: dialog.getAttribute('aria-labelledby'), text: dialog.textContent.slice(0, 1000),
+          })),
+        }
+      }, selector)
+      console.error('Fixture focus restoration failed:', JSON.stringify(diagnostics, null, 2))
+      await page.screenshot({ path: `${output}/delete-run-focus-failure.png` })
+      throw error
+    }
+  }
+  const waitRunCount = async (count) => {
+    await page.waitForFunction((count) => document.querySelectorAll('.am-run').length === count, count)
+    const tab = page.getByRole('button', { name: /Run history/ })
+    if (count > 0) assert.match(await tab.innerText(), new RegExp(`\\b${count}\\b`), 'History count follows remaining records')
+  }
+  const refreshHistory = async (count) => {
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await waitRunCount(count)
+  }
+  const assertDeleteModal = async () => {
+    await deleteDialog.waitFor()
+    await assertTypography()
+    const family = await page.locator('.am-panel').evaluate((el) => getComputedStyle(el).fontFamily)
+    const metrics = await deleteDialog.evaluate((dialog) => {
+      const button = dialog.querySelector('[data-am-confirm-delete-run]')
+      const css = getComputedStyle(button)
+      const box = dialog.getBoundingClientRect()
+      return { family: css.fontFamily, size: css.fontSize, weight: css.fontWeight, lineHeight: css.lineHeight,
+        overflow: dialog.scrollWidth > dialog.clientWidth, inViewport: box.left >= 0 && box.right <= innerWidth }
+    })
+    assert.deepEqual(metrics, { family, size: '12px', weight: '400', lineHeight: '18px', overflow: false, inViewport: true }, 'Deletion confirmation keeps Host button typography and fits the viewport')
+    await page.waitForFunction(() => document.activeElement?.closest('[role="dialog"]')?.querySelector('[data-am-confirm-delete-run]'))
+    const tabStops = await deleteDialog.locator('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]').count()
+    for (const key of ['Tab', 'Shift+Tab']) {
+      for (let index = 0; index <= tabStops; index++) {
+        await page.keyboard.press(key)
+        assert.equal(await deleteDialog.evaluate((dialog) => dialog.contains(document.activeElement)), true, `${key} stays within the deletion confirmation, including wraparound`)
+      }
+    }
+  }
+  historyTask.runs = [oldRun, ...structuredClone(savedHistory)]
+  await refreshHistory(2)
+  // Existing row expansion survives fixture refresh because its run id is stable.
+  const latestDelete = deleteButton(savedHistory[0].id)
+  await latestDelete.waitFor()
+  assert.equal(await latestDelete.isDisabled(), false)
+  await latestDelete.scrollIntoViewIfNeeded()
+  await assertTypography()
+  await page.screenshot({ path: `${output}/delete-run-expanded-desktop.png` })
+  const beforeDelete = deleteRequests().length
+  await latestDelete.click()
+  await assertDeleteModal()
+  await page.screenshot({ path: `${output}/delete-run-confirm-desktop.png` })
+  await deleteDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await deleteDialog.waitFor({ state: 'hidden' })
+  await waitForFocus(`[data-am-delete-run="${savedHistory[0].id}"]`)
+  assert.equal(await latestDelete.evaluate((el) => el === document.activeElement), true, 'Cancel restores focus to the row action')
+  await latestDelete.click()
+  await deleteDialog.waitFor()
+  await page.keyboard.press('Escape')
+  await deleteDialog.waitFor({ state: 'hidden' })
+  await waitForFocus(`[data-am-delete-run="${savedHistory[0].id}"]`)
+  assert.equal(await latestDelete.evaluate((el) => el === document.activeElement), true, 'Escape restores focus without closing the Automation panel')
+  assert.equal(await page.locator('.am-panel').isVisible(), true)
+  assert.equal(deleteRequests().length, beforeDelete, 'Neither cancellation path sends a delete')
+
+  deleteRunError = true
+  await latestDelete.click()
+  await deleteConfirm.click()
+  await deleteDialog.getByRole('alert').filter({ hasText: 'Fixture record deletion failed' }).waitFor()
+  assert.equal(historyTask.runs.length, 2)
+  await waitRunCount(2)
+  assert.equal(await deleteConfirm.isEnabled(), true, 'Failed deletion leaves the confirmation available for retry')
+  deleteRunError = false
+  let releaseStaleList
+  let markStaleListStarted
+  const staleListStarted = new Promise((resolve) => { markStaleListStarted = resolve })
+  listGate = { pending: new Promise((resolve) => { releaseStaleList = resolve }), started: markStaleListStarted }
+  // Trigger the real refresh handler behind the modal to simulate a background
+  // poll, without waiting for the five-second polling timer or calling real APIs.
+  await page.getByRole('button', { name: 'Refresh', exact: true }).evaluate((button) => button.click())
+  const staleListRequest = await staleListStarted
+  let releaseDelete
+  deleteRunGate = new Promise((resolve) => { releaseDelete = resolve })
+  const pendingDelete = page.waitForRequest((request) => request.method() === 'DELETE' && request.url().endsWith(`/runs/${savedHistory[0].id}`))
+  try {
+    await deleteConfirm.click()
+    await pendingDelete
+    assert.equal(await deleteConfirm.isDisabled(), true, 'Pending deletion blocks duplicate submission')
+    for (const key of ['Tab', 'Shift+Tab']) {
+      await page.keyboard.press(key)
+      assert.equal(await deleteDialog.evaluate((dialog) => dialog.contains(document.activeElement)), true, 'Focus stays in the dialog after its action buttons become disabled')
+    }
+    await page.keyboard.press('Escape')
+    assert.equal(await deleteDialog.isVisible(), true, 'Escape cannot dismiss a pending deletion')
+    await deleteConfirm.evaluate((button) => { button.click(); button.click() })
+    assert.equal(deleteRequests().length, beforeDelete + 2, 'Exactly one failure and one retry request are issued')
+    assert.equal(historyTask.runs.length, 2, 'A pending request does not optimistically remove history')
+  } finally {
+    releaseDelete()
+    deleteRunGate = undefined
+  }
+  try {
+    await deleteDialog.waitFor({ state: 'hidden', timeout: 5000 })
+    await waitRunCount(1)
+    await waitForFocus('[data-am-view="runHistory"]')
+    assert.equal(await page.locator('[data-am-view="runHistory"]').evaluate((el) => el === document.activeElement), true, 'Successful deletion focuses the surviving history tab even while an older poll is unresolved')
+  } finally {
+    releaseStaleList()
+  }
+  const staleListResponse = await staleListRequest.response()
+  await staleListResponse.finished()
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  assert.equal(await page.locator('.am-run').count(), 1, 'A late pre-delete response cannot resurrect the removed record')
+  assert.equal(await deleteButton(savedHistory[0].id).count(), 0)
+  await waitRunCount(1)
+  assert.equal(await page.locator('[data-am-view="runHistory"]').evaluate((el) => el === document.activeElement), true, 'Successful deletion focuses the surviving history tab')
+  assert.deepEqual(historyTask.runs.map((run) => run.id), [oldRun.id])
+  assert.deepEqual(taskWithoutRuns(historyTask), unchangedTask)
+  assert.equal(tasks.length, 4, 'Deleting a run never deletes its task')
+  assert.deepEqual(await page.evaluate(() => window.__automationSessionIds()), unchangedSessions, 'Run deletion leaves the session registry intact')
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await page.locator('.am-summary').getByText(oldRun.summary, { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Open session', exact: true }).click()
+  assert.equal(await page.evaluate(() => window.__automationOpenedSession), oldRun.sessionId, 'Overview opens the remaining latest session')
+
+  // Opening a session intentionally closes the panel; reopen through its real
+  // sidebar entry, then select the fixture task in the mobile list.
+  await page.getByRole('button', { name: 'Open Automations', exact: true }).click()
+  await page.locator('.am-panel').waitFor()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.locator('.am-row').filter({ hasText: historyTask.name }).click()
+  await page.getByRole('button', { name: /Run history/ }).click()
+  await page.locator('.am-run').click()
+  await deleteButton(oldRun.id).scrollIntoViewIfNeeded()
+  await assertTypography()
+  await page.screenshot({ path: `${output}/delete-run-expanded-mobile.png` })
+  await deleteButton(oldRun.id).click()
+  await assertDeleteModal()
+  await page.screenshot({ path: `${output}/delete-run-confirm-mobile.png` })
+  listError = true
+  const failedRefreshAfterDelete = page.waitForResponse((response) => response.url().endsWith('/api/automation/v1/tasks') && response.status() === 503)
+  await deleteConfirm.click()
+  await failedRefreshAfterDelete
+  await deleteDialog.waitFor({ state: 'hidden' })
+  await waitRunCount(0)
+  await waitForFocus('[data-am-view="runHistory"]')
+  assert.equal(await page.locator('[data-am-view="runHistory"]').evaluate((el) => el === document.activeElement), true)
+  assert.equal(historyTask.runs.length, 0, 'A failed post-delete refresh never resurrects the confirmed deletion')
+  listError = false
+  assert.equal(await page.locator('.am-empty-note').isVisible(), true, 'Deleting the final record shows the history empty state')
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  assert.equal(await page.locator('.am-summary').count(), 0)
+  assert.equal(await page.locator('.am-detail-note').isVisible(), true)
+  assert.deepEqual(taskWithoutRuns(historyTask), unchangedTask)
+  assert.deepEqual(await page.evaluate(() => window.__automationSessionIds()), unchangedSessions)
+  await page.setViewportSize({ width: 1440, height: 1000 })
+
+  // Active records are protected individually, not by locking all task history.
+  historyTask.running = true
+  historyTask.runs = [structuredClone(oldRun),
+    { id: 'fixture-delete-queued', trigger: 'manual', status: 'queued', enqueuedAt: instant(-3000) },
+    { id: 'fixture-delete-running', trigger: 'manual', status: 'running', enqueuedAt: instant(-2000), startedAt: instant(-1000) },
+    { ...structuredClone(savedHistory[0]), id: 'fixture-delete-sending', delivery: { botId: 'bot-alpha', targetId: 'report', status: 'sending', attemptedAt: instant(0) } },
+  ]
+  await page.getByRole('button', { name: /Run history/ }).click()
+  await refreshHistory(4)
+  for (const row of await page.locator('.am-run').all()) await row.click()
+  for (const id of ['fixture-delete-queued', 'fixture-delete-running', 'fixture-delete-sending']) {
+    assert.equal(await deleteButton(id).isDisabled(), true, `${id} must not be deletable`)
+  }
+  assert.equal(await deleteButton(oldRun.id).isEnabled(), true, 'Finished records stay deletable while another run is active')
+  await deleteButton(oldRun.id).click()
+  await deleteConfirm.click()
+  await deleteDialog.waitFor({ state: 'hidden' })
+  await waitRunCount(3)
+  assert.deepEqual(historyTask.runs.map((run) => run.id), ['fixture-delete-queued', 'fixture-delete-running', 'fixture-delete-sending'])
+  assert.equal(historyTask.running, true)
+  assert.deepEqual(await page.evaluate(() => window.__automationSessionIds()), unchangedSessions)
+  // Restore the original fixture so existing editor/lifecycle scenarios stay independent.
+  historyTask.runs = savedHistory
+  historyTask.running = unchangedTask.running
+  await refreshHistory(1)
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   assert.equal(await page.locator('.am-editor-disclosure').count(), 4)
   assert.equal(await page.locator('.am-editor-disclosure[open]').count(), 0)
@@ -821,7 +1052,7 @@ try {
   await page.waitForFunction(() => window.__automationOpenedSession === 'fixture-new-session')
   assert.equal(await page.locator('.am-panel').count(), 0)
   assert.deepEqual(errors.filter((message) => !message.includes('AUTOMATION_TEST_BOOT_STOP')), [])
-  console.log(`PASS: actual bundle against ${base}; overview/history/settings, editor save/discard, filters, mobile, dark, empty, error/retry. All writes intercepted (${writes.length}). Screenshots: ${output}`)
+  console.log(`PASS: actual bundle against ${base}; overview/history/settings, single-run delete cancel/focus/retry/pending/active guards/refresh failure, editor save/discard, filters, mobile, dark, empty, error/retry. All writes intercepted (${writes.length}). Screenshots: ${output}`)
 } finally {
   await browser.close()
 }

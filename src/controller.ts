@@ -131,6 +131,10 @@ export class AutomationController {
     return deleted
   }
 
+  async deleteRun(taskId: string, runId: string): Promise<boolean> {
+    return this.domain.deleteRun(taskId, runId)
+  }
+
   async markNotificationsRead(): Promise<void> {
     await this.domain.markNotificationsRead()
   }
