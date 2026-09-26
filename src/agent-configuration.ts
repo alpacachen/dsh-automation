@@ -1,12 +1,12 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { standingMountFor } from '@deepseek-ai/dsh-agent-presets'
+import { standingMountFor } from '@deepseek-ai/dsh-agent-preset-registry'
 import { isUserInvocable, renderSkillContent, type SkillSummary } from '@deepseek-ai/dsh-skill'
 import { assertProviderModelPair, validateReasoningExecution } from './validation.js'
 import type { AgentConfigurationOptions, AutomationExecution, AutomationTask } from './types.js'
 
-import '@deepseek-ai/dsh-agent-presets'
+import '@deepseek-ai/dsh-agent-preset-registry'
 import '@deepseek-ai/dsh-llm'
 import '@deepseek-ai/dsh-permission-presets'
 import '@deepseek-ai/dsh-skill'
@@ -42,8 +42,8 @@ export class AgentConfiguration {
     let skills: SkillSummary[] = []
     const candidatePreset = presets.find((preset) => preset.id === (agentPreset ?? this.ctx.agentPresets.defaultId))
     if (candidatePreset !== undefined && candidatePreset.broken === undefined) {
-      const scope = await this.ctx.agentPresets.standingKeyFor(agentPreset)
-      skills = (await this.ctx.skills.list({ cwd, scope })).filter(isUserInvocable)
+      await using scope = await this.ctx.agentPresets.acquireScope(agentPreset)
+      skills = (await this.ctx.skills.list({ cwd, scope: scope.key })).filter(isUserInvocable)
     }
     return {
       ...(reasoning === undefined ? {} : { reasoning }),
@@ -51,7 +51,6 @@ export class AgentConfiguration {
         id: preset.id,
         name: preset.name ?? preset.id,
         ...(preset.description === undefined ? {} : { description: preset.description }),
-        trust: preset.trust,
         ...(preset.broken === undefined ? {} : { broken: preset.broken }),
         default: preset.id === this.ctx.agentPresets.defaultId,
       })),
@@ -111,9 +110,9 @@ export class AgentConfiguration {
         ...(execution.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(execution.reasoningEffort) }),
       })
     }
-    const scope = await this.ctx.agentPresets.standingKeyFor(execution.agentPreset)
+    await using scope = await this.ctx.agentPresets.acquireScope(execution.agentPreset)
     for (const name of execution.skills) {
-      const skill = await this.ctx.skills.get(name, { cwd: execution.cwd, scope })
+      const skill = await this.ctx.skills.get(name, { cwd: execution.cwd, scope: scope.key })
       if (skill === undefined) throw new Error(`Selected skill ${name} is unavailable.`)
       if (!isUserInvocable(skill)) throw new Error(`Selected skill ${name} is not user-invocable.`)
     }

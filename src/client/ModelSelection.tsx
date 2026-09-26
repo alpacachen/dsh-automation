@@ -1,5 +1,6 @@
 import React from 'react'
-import { IconChevronDownOutline14, IconChevronRightOutline14, Menu, type MenuItem } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu, type MenuItem } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, IconChevronRightOutline14 } from './icons.js'
 import { t as translate } from './i18n.js'
 import type { SelectOption } from './shared.js'
 

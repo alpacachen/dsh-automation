@@ -82,7 +82,8 @@ test('mounts into the host slots it depends on', async () => {
   assert.match(client, /sidebar\.footer\.action/)
   assert.match(client, /conversation\.input\.dock/)
   assert.match(client, /inputActions\.setDraft\(text\)/)
-  assert.match(client, /ctx\.sessions\.open\(sessionId\)/)
+  assert.match(client, /ctx\.uiWorkspace\.openSession\(sessionId\)/)
+  assert.doesNotMatch(client, /ctx\.sessions\.open\(/)
   assert.match(client, /guidedCreationPrompt/)
 })
 

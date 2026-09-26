@@ -19,12 +19,31 @@ async function invoke(route: Route, method: string, url: string, body?: string, 
   return { status, value: JSON.parse(text) }
 }
 
-function setup(controller: AutomationController) {
+function setup(controller: AutomationController, rejection?: 401 | 403) {
   let route: Route | undefined
-  const ctx = { webServer: { register(value: Route) { route = value; return () => { route = undefined } } } } as unknown as Context
+  const ctx = {
+    connection: { requestRejection() { return rejection } },
+    webServer: { register(value: Route) { route = value; return () => { route = undefined } } },
+  } as unknown as Context
   const dispose = registerAutomationApi(ctx, controller)
   return { route: () => route!, dispose }
 }
+
+test('every API route honors Host authentication before reading or changing tasks', async () => {
+  const controller = new Proxy({}, { get() { assert.fail('Rejected requests must not reach the controller') } }) as AutomationController
+  for (const rejection of [401, 403] as const) {
+    const route = setup(controller, rejection).route()
+    for (const [method, path] of [
+      ['GET', '/tasks'], ['GET', '/delivery-options'], ['GET', '/tasks/task/options'],
+      ['POST', '/notifications/read'], ['POST', '/tasks/task/run'],
+      ['PATCH', '/tasks/task'], ['DELETE', '/tasks/task'], ['DELETE', '/tasks/task/runs/run'],
+    ] as const) {
+      assert.deepEqual(await invoke(route, method, `/api/automation/v1${path}`, 'invalid JSON', { 'x-dsh-automation': '1' }), {
+        status: rejection, value: { error: rejection === 401 ? 'Unauthorized' : 'Forbidden' },
+      })
+    }
+  }
+})
 
 test('run deletion returns precise results and route-specific conflict/not-found errors', async () => {
   const calls: string[][] = []

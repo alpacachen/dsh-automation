@@ -177,7 +177,6 @@ export interface AgentConfigurationOptions {
     readonly id: string
     readonly name: string
     readonly description?: string
-    readonly trust: 'system' | 'user'
     readonly broken?: string
     readonly default: boolean
   }[]

@@ -12,7 +12,7 @@ import { registerAutomationApi } from './api.js'
 import { AgentConfiguration } from './agent-configuration.js'
 import { deliveryOptions, sendAutomationResult, validateDelivery } from './im-delivery.js'
 
-import '@deepseek-ai/dsh-agent-presets'
+import '@deepseek-ai/dsh-agent-preset-registry'
 import '@deepseek-ai/dsh-host-webserver'
 import '@deepseek-ai/dsh-llm'
 import '@deepseek-ai/dsh-permission-presets'
@@ -40,6 +40,7 @@ export const inject = [
   'workspaceRegistry',
   'sessionTitle',
   'webServer',
+  'connection',
 ]
 
 export interface Config {
@@ -82,7 +83,10 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   }
 
   for (const agent of ctx.agents.roots()) installTools(agent)
-  const stopCreated = ctx.on('agent/created', ({ agent }) => installTools(agent))
+  const stopCreated = ctx.on('agent/created', ({ agent }) => {
+    installTools(agent)
+    return undefined
+  })
   const stopDisposed = ctx.on('agent/disposed', ({ agent }) => {
     toolCleanups.get(agent)?.()
     toolCleanups.delete(agent)

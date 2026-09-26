@@ -210,7 +210,7 @@ test('real loop pending cancellation removes only automation input before it is 
   const message = f.userMessage('Queued human input must survive')
   let canceled = false
   const stop = f.ctx.on('agent/inbox/inserted', (event: { agent: unknown; message: { source?: { kind?: string; plugin?: string } } }) => {
-    if (event.agent !== f.agent || event.message.source?.kind !== 'plugin' || event.message.source.plugin !== 'automation') return
+    if (event.agent !== f.agent || event.message.source?.kind !== 'plugin:automation') return
     f.agent.followup(message)
     canceled = f.runner.cancel(f.run.id, 'manual')
   })

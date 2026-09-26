@@ -2,18 +2,18 @@ import React from 'react'
 import {
   Button,
   Input,
-  IconQuestionOutline14,
-  IconSearchOutline16,
   Switch,
   Tag,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconQuestionOutline14, IconSearchOutline16 } from './icons.js'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { AgentConfigurationOptions, AutomationDelivery, AutomationDeliveryOptions, AutomationExecutionPatch, AutomationTaskView } from '../types.js'
 import { t as translate } from './i18n.js'
 import { ScheduleSection, useScheduleEditor } from './ScheduleSection.js'
 import { Select, type SelectOption } from './shared.js'
 import { request } from './store.js'
+import { selectedSessionId } from './session-selection.js'
 import { Disclosure, Field, Section } from './editor-layout.js'
 import { SkillPicker } from './SkillPicker.js'
 import { ModelSelection } from './ModelSelection.js'
@@ -78,6 +78,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
   const selectedSession = candidates.find((session) => session.id === targetSessionId)
   const targetValid = !targetChanged || (!targetLocked && (!pinned ||
     (!sessionsLoading && sessionLoadError === undefined && sessions.phase === 'ready' && selectedSession !== undefined)))
+  const currentSessionId = selectedSessionId(sessions)
   const needle = sessionQuery.trim().toLowerCase()
   const sessionOptions: SelectOption[] = [
     { value: '', label: t('selectSession'), disabled: true },
@@ -86,7 +87,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
     ...candidates.filter((session) => session.id === targetSessionId ||
       `${session.displayTitle} ${session.id}`.toLowerCase().includes(needle)).map((session) => ({
       value: session.id,
-      label: `${session.displayTitle}${session.id === sessions.current ? ` · ${t('currentSession')}` : ''}${session.running ? ` · ${t('statusRunning')}` : ''}`,
+      label: `${session.displayTitle}${session.id === currentSessionId ? ` · ${t('currentSession')}` : ''}${session.running ? ` · ${t('statusRunning')}` : ''}`,
       hint: `${session.id} · ${new Date(session.updatedAt).toLocaleString()}`,
     })),
   ]
@@ -203,7 +204,7 @@ export function TaskEditor({ task, sessions, workspaceSessionIds, refreshSession
       : []),
     ...(options?.presets ?? []).map((entry) => ({
       value: entry.id,
-      label: `${entry.name} · ${entry.trust}${entry.broken === undefined ? '' : ` · ${t('unavailable')}`}`,
+      label: `${entry.name}${entry.broken === undefined ? '' : ` · ${t('unavailable')}`}`,
       ...(entry.description === undefined ? {} : { hint: entry.description }),
       ...(entry.broken === undefined ? {} : { disabled: true }),
     })),

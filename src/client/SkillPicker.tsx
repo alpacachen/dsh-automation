@@ -1,10 +1,6 @@
 import React from 'react'
-import {
-  Button,
-  Input,
-  IconCloseOutline16,
-  IconSearchOutline16,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutline16, IconSearchOutline16 } from './icons.js'
 import type { AgentConfigurationOptions } from '../types.js'
 import { t as translate } from './i18n.js'
 
