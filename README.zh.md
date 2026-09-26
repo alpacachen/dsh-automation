@@ -55,6 +55,8 @@
 
 ## 开始使用
 
+以 DSH **0.1.7-rc.2** 及其当前接口为基线，不再支持旧版 Host。
+
 ```sh
 dsh plugin --profile web add @alpacachen/dsh-automation
 ```

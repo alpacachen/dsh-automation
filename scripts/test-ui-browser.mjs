@@ -60,7 +60,10 @@ const reasoningModels = {
   quick: [{ id: 'brief', name: 'Brief review' }],
   plain: [],
 }
-const options = { presets: [], models: [{ provider: 'fixture-models', name: 'Fixture models', models: [
+const options = { presets: [
+  { id: 'modern', name: 'Modern preset', default: true },
+  { id: 'alternate', name: 'Alternate preset', default: false },
+], models: [{ provider: 'fixture-models', name: 'Fixture models', models: [
   { id: 'deliberate', name: 'Deliberate model' }, { id: 'quick', name: 'Quick model' }, { id: 'plain', name: 'Plain model' },
 ] }], modelFailures: [], skills: [], permissions: [
   { id: 'read-only', name: 'Read only', sandbox: 'read-only', approval: 'never', default: true },
@@ -210,12 +213,18 @@ try {
           inject(_name, install) { return install() },
           register(meta, Component) { components[meta.id] = Component; return () => {} },
         },
-        sessions: { open(id) { window.__automationOpenedSession = id }, async refresh() {
+        sessions: { async refresh() {
           if (window.__automationSessionRefreshError) throw new Error('Fixture sessions unavailable')
           // Host remote failures resolve without making the first baseline ready.
           if (!window.__automationSessionRefreshPending) queueMicrotask(() => setSessionPhase('ready'))
         } },
-        uiWorkspace: { async connectWorkspace() { return 'fixture-new-session' } },
+        uiWorkspace: {
+          async connectWorkspace(workspaceId) {
+            window.__automationConnectedWorkspace = workspaceId
+            return 'fixture-new-session'
+          },
+          openSession(id) { window.__automationOpenedSession = id },
+        },
       }
       mod.apply(ctx)
       document.body.replaceChildren()
@@ -230,8 +239,13 @@ try {
         { id: 'fixture-child', displayTitle: 'Child conversation', cwd: '/preview/project', parentId: 'fixture-current', origin: 'subagent', running: false },
         { id: 'fixture-detached', displayTitle: 'Detached conversation', cwd: '/preview/project', running: false },
         { id: 'fixture-archived', displayTitle: 'Archived conversation', cwd: '/preview/project', running: false },
-      ].map((row) => ({ ...row, blank: false, updatedAt: Date.now() }))
-      sessionSnapshot = { current: 'fixture-current', phase: 'ready', ids: sessionRows.map((row) => row.id), byId: Object.fromEntries(sessionRows.map((row) => [row.id, row])) }
+      ].map((row) => ({ ...row, blank: false, updatedAt: Date.now(), retainedBy: { mainView: row.id === 'fixture-current' ? 1 : 0 } }))
+      sessionSnapshot = { phase: 'ready', ids: sessionRows.map((row) => row.id), byId: Object.fromEntries(sessionRows.map((row) => [row.id, row])), projectionsBySession: {} }
+      window.__automationSelectSession = (id) => {
+        sessionSnapshot = { ...sessionSnapshot, byId: Object.fromEntries(sessionRows.map((row) =>
+          [row.id, { ...row, retainedBy: { mainView: row.id === id ? 1 : 0 } }])) }
+        for (const listener of sessionListeners) listener()
+      }
       window.__automationSessionIds = () => [...sessionSnapshot.ids]
       const subscribeSessions = (listener) => { sessionListeners.add(listener); return () => sessionListeners.delete(listener) }
       const getSessions = () => sessionSnapshot
@@ -242,6 +256,9 @@ try {
           React.createElement(components.automation, { wide }))
       }
       ReactDOM.createRoot(root).render(React.createElement(React.Fragment, null,
+        React.createElement('div', { id: 'fixture-native-menu', hidden: true },
+          React.createElement(window.__automationTestSeeds['@deepseek-ai/dsh-client-ui-primitives'].MenuItemButton,
+            { onSelect() {} }, 'Native menu baseline')),
         React.createElement(SidebarFixture),
         React.createElement(components['automation-panel'], {
           useSessions: (select) => select(React.useSyncExternalStore(subscribeSessions, getSessions, getSessions)),
@@ -255,8 +272,10 @@ try {
     await page.locator('.am-panel').waitFor()
   }
   const assertCustomFocus = async (locator) => {
-    await page.keyboard.press('Tab')
     await locator.focus()
+    // Enter through real keyboard navigation rather than programmatic focus modality.
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Shift+Tab')
     const focus = await locator.evaluate((el) => {
       const css = getComputedStyle(el)
       return { visible: el.matches(':focus-visible'), style: css.outlineStyle, width: css.outlineWidth }
@@ -354,10 +373,11 @@ try {
           if (visible(el)) check(el, { fontSize: '12px', lineHeight: '18px', fontWeight: '400' })
         }
       }
-      // Host menus are portaled outside the panel; check them when opened too.
+      // Compare to this Host's native menu, whose typography changed in 0.1.7.
+      const menuFont = getComputedStyle(document.querySelector('#fixture-native-menu [role="menuitem"]'))
       for (const item of document.querySelectorAll('[role="menuitem"]')) {
         for (const el of [item, ...item.querySelectorAll('span')]) {
-          if (visible(el)) check(el, { fontSize: '14px', lineHeight: '22px', fontWeight: '400', fontFamily: family })
+          if (visible(el)) check(el, { fontSize: menuFont.fontSize, lineHeight: menuFont.lineHeight, fontWeight: '400', fontFamily: family })
         }
       }
       return violations
@@ -367,15 +387,44 @@ try {
   await mount()
   await page.locator('.am-row').first().waitFor()
   assert.equal(await page.locator('.am-row').count(), 4)
+  // Exercise current Host selection without creating a real Session or task.
+  for (const id of [undefined, 'fixture-other']) {
+    await page.evaluate((id) => window.__automationSelectSession(id), id)
+    await page.waitForFunction(() => document.querySelector('.am-header button').disabled)
+  }
+  await page.evaluate(() => window.__automationSelectSession('fixture-current'))
+  await page.waitForFunction(() => !document.querySelector('.am-header button').disabled)
+  await page.getByRole('button', { name: 'New automation', exact: true }).click()
+  await page.locator('.am-panel').waitFor({ state: 'hidden' })
+  assert.equal(await page.evaluate(() => window.__automationConnectedWorkspace), 'fixture-workspace')
+  assert.equal(await page.evaluate(() => window.__automationOpenedSession), 'fixture-new-session')
+  await page.getByRole('button', { name: 'Open Automations', exact: true }).click()
+  await page.locator('.am-panel').waitFor()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.locator('.am-editor-disclosure summary').first().click()
+  await page.getByRole('button', { name: 'Agent preset', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Modern preset', exact: true }).waitFor()
+  await page.getByRole('menuitem', { name: 'Alternate preset', exact: true }).waitFor()
+  assert.doesNotMatch(await page.getByRole('menu').innerText(), /undefined/)
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+  if (process.argv.includes('--creation-only')) {
+    assert.deepEqual(errors.filter((message) => !message.includes('AUTOMATION_TEST_BOOT_STOP')), [])
+    console.log('PASS: current Host selection and preset metadata, missing-workspace guards, New automation and workspace navigation; all business services intercepted.')
+  } else {
   const search = page.getByRole('textbox', { name: 'Search automations' })
   await page.keyboard.press('Tab')
   await search.focus()
   assert.deepEqual(await search.evaluate((el) => {
     const css = getComputedStyle(el)
     const probe = document.createElement('span')
-    probe.style.color = 'var(--dsw-alias-brand-primary)'
     el.parentElement.append(probe)
-    const focusedBorder = getComputedStyle(el.parentElement).borderColor === getComputedStyle(probe).color
+    // Host 0.1.7 moved Input focus from the brand token to the business-state token.
+    const focusedBorder = ['--dsw-alias-state-business-primary', '--dsw-alias-brand-primary'].some((token) => {
+      if (!getComputedStyle(el).getPropertyValue(token).trim()) return false
+      probe.style.color = `var(${token})`
+      return getComputedStyle(el.parentElement).borderColor === getComputedStyle(probe).color
+    })
     probe.remove()
     return { visible: el.matches(':focus-visible'), outline: css.outlineStyle, shadow: css.boxShadow, focusedBorder }
   }), { visible: true, outline: 'none', shadow: 'none', focusedBorder: true }, 'Official Input uses its wrapper border, never an extra inner ring')
@@ -613,6 +662,7 @@ try {
   historyTask.running = unchangedTask.running
   await refreshHistory(1)
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.waitForFunction(() => document.activeElement?.id === 'am-name')
   assert.equal(await page.locator('.am-editor-disclosure').count(), 4)
   assert.equal(await page.locator('.am-editor-disclosure[open]').count(), 0)
   assert.equal(await page.locator('.am-editor .am-pill-group button').count() > 0, true, 'Editor must exercise real Host Pills')
@@ -867,7 +917,7 @@ try {
   await page.getByRole('menuitem', { name: 'New session for every run', exact: true }).click()
   await page.getByRole('button', { name: 'Save changes', exact: true }).click()
   await page.locator('.am-editor').waitFor({ state: 'hidden' })
-  // Delivery help is discoverable before enabling, by hover, keyboard, or tap.
+  // Current Host Tooltip exposes help on hover/keyboard and dismisses on click.
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   const deliveryHelp = page.getByRole('button', { name: 'About message delivery', exact: true })
   assert.equal(await deliveryHelp.locator('svg').count(), 1, 'Help uses the Host question icon, not a text glyph')
@@ -878,11 +928,12 @@ try {
   await page.screenshot({ path: `${output}/message-delivery-help.png`, animations: 'disabled' })
   assert.equal(await helpText.evaluate((el) => getComputedStyle(el).opacity), '1')
   await page.mouse.move(0, 0)
+  await page.keyboard.press('Tab')
   await deliveryHelp.focus()
   await helpText.waitFor()
   await deliveryHelp.click()
   assert.equal(await deliveryHelp.evaluate((el) => el.closest('details').open), false, 'Help must not toggle the section')
-  await helpText.waitFor()
+  await helpText.waitFor({ state: 'hidden' })
   await page.getByRole('button', { name: 'Cancel', exact: true }).last().click()
   // Optional direct delivery is independent of fresh/pinned execution and sidebar notifications.
   const openDelivery = async () => {
@@ -1053,6 +1104,7 @@ try {
   assert.equal(await page.locator('.am-panel').count(), 0)
   assert.deepEqual(errors.filter((message) => !message.includes('AUTOMATION_TEST_BOOT_STOP')), [])
   console.log(`PASS: actual bundle against ${base}; overview/history/settings, single-run delete cancel/focus/retry/pending/active guards/refresh failure, editor save/discard, filters, mobile, dark, empty, error/retry. All writes intercepted (${writes.length}). Screenshots: ${output}`)
+  }
 } finally {
   await browser.close()
 }

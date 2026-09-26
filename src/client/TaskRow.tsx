@@ -1,5 +1,6 @@
 import React from 'react'
-import { StateDot, IconWarningOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconWarningOutline16 } from './icons.js'
 import type { AutomationTaskView } from '../types.js'
 import type { t as translate } from './i18n.js'
 import { formatRelative, statusState, statusLabel } from './shared.js'

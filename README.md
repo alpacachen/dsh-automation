@@ -55,6 +55,8 @@
 
 ## Get started
 
+Targets DSH **0.1.7-rc.2** and its current APIs. Older Host versions are not supported.
+
 ```sh
 dsh plugin --profile web add @alpacachen/dsh-automation
 ```

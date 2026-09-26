@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconAlarmClockOutline16, IconRightUpOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAlarmClockOutline16, IconRightUpOutline14 } from './icons.js'
 import type { t as translate } from './i18n.js'
 import { IconCalendar, IconShield } from './shared.js'
 

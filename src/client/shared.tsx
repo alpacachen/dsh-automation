@@ -5,13 +5,11 @@ import {
   StateDot,
   Tag,
   Tooltip,
-  IconCheckOutline16,
-  IconChevronDownOutline14,
-  IconCopyOutline16,
   type MenuEntry,
   type StateDotState,
   type TagTone,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconChevronDownOutline14, IconCopyOutline16 } from './icons.js'
 import { t as translate } from './i18n.js'
 
 /** Task/run status strings the API can return, mapped onto platform semantics. */

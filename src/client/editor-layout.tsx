@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconChevronRightOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronRightOutline14 } from './icons.js'
 
 /** One labelled form row. */
 export function Field({ label, children, full, hint, htmlFor }: {

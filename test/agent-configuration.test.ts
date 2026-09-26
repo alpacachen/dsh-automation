@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
+import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import { AgentConfiguration } from '../src/agent-configuration.js'
 import { execution } from './helpers.js'
 
@@ -12,16 +13,16 @@ function context() {
   return {
     agentPresets: {
       defaultId: 'standard',
-      async list() { return [{ id: 'standard', name: 'Standard', trust: 'system', path: '/standard' }, { id: 'broken', trust: 'user', path: '/broken', broken: 'bad yaml' }] },
+      async list() { return [{ id: 'standard', name: 'Standard' }, { id: 'broken', broken: 'bad yaml' }] },
       async resolve(id = 'standard') {
         const preset = (await this.list()).find((entry) => entry.id === id)
         if (preset === undefined) throw new Error(`Unknown preset ${id}`)
         return preset
       },
-      async standingKeyFor(id = 'standard') {
+      async acquireScope(id = 'standard') {
         const preset = await this.resolve(id)
         if (preset.broken !== undefined) throw new Error(preset.broken)
-        return { id }
+        return { key: { id }, async [Symbol.asyncDispose]() {} }
       },
       serviceFor() { return undefined },
     },
@@ -112,6 +113,27 @@ test('Host options preserve partial model failures and dynamic permission metada
   assert.equal(options.presets.find((entry) => entry.id === 'broken')?.broken, 'bad yaml')
 })
 
+test('options preserve current preset metadata as lossless JSON', async () => {
+  const ctx = context()
+  Object.assign(ctx.agentPresets, {
+    async list() {
+      return [
+        { id: 'standard', description: undefined },
+        { id: 'broken', broken: 'bad declaration' },
+      ]
+    },
+  })
+  const options = await new AgentConfiguration(ctx).options('/w')
+  const result = { ok: true, options }
+  assert.deepEqual(snapshotJsonValue(result), result, 'The complete tool result must survive the Host lossless JSON boundary')
+  assert.equal(Object.hasOwn(options.presets[0] ?? {}, 'trust'), false)
+  assert.equal(options.presets[0]?.name, 'standard')
+  assert.equal(options.presets[1]?.broken, 'bad declaration')
+  assert.deepEqual(options.permissions.map(({ sandbox, approval }) => [sandbox, approval]), [
+    ['workspace-write', 'ask'], ['danger-full-access', 'never'],
+  ])
+})
+
 test('validation is fail-closed but accepts advisory-unlisted resolvable models and Host permission ids', async () => {
   const configuration = new AgentConfiguration(context())
   await configuration.validate({ ...execution, provider: 'good', model: 'unlisted', skills: ['report'] }, 'workspace-safe')
@@ -123,6 +145,40 @@ test('validation is fail-closed but accepts advisory-unlisted resolvable models 
   await assert.rejects(() => configuration.validate({ ...execution, provider: 'good', model: 'model', skills: ['missing'] }, 'workspace-safe'), /unavailable/)
   await assert.rejects(() => configuration.validate({ ...execution, provider: 'good', model: 'model', skills: ['hidden'] }, 'workspace-safe'), /not user-invocable/)
   await assert.rejects(() => configuration.validate({ ...execution, provider: 'good', model: 'model' }, 'missing'), /Unknown permission/)
+})
+
+test('preset scope leases support current Hosts and are released on success and failure', async () => {
+  const ctx = context()
+  const scope = {}
+  let held = false
+  let released = 0
+  Object.assign(ctx.agentPresets, {
+    async acquireScope() {
+      assert.equal(held, false)
+      held = true
+      return { key: scope, async [Symbol.asyncDispose]() { held = false; released += 1 } }
+    },
+  })
+  const list = ctx.skills.list.bind(ctx.skills)
+  const get = ctx.skills.get.bind(ctx.skills)
+  ctx.skills.list = async (options) => {
+    assert.equal(held, true)
+    assert.equal(options?.scope, scope)
+    return list(options)
+  }
+  ctx.skills.get = async (name, options) => {
+    assert.equal(held, true)
+    assert.equal(options?.scope, scope)
+    return get(name, options)
+  }
+  const config = new AgentConfiguration(ctx)
+  assert.deepEqual((await config.options('/w')).skills.map((skill) => skill.name), ['report'])
+  await config.validate({ ...execution, provider: 'good', model: 'model', skills: ['report'] }, 'workspace-safe')
+  await assert.rejects(config.validate({ ...execution, provider: 'good', model: 'model', skills: ['missing'] }, 'workspace-safe'), /unavailable/)
+  ctx.skills.list = async () => { throw new Error('discovery failed') }
+  await assert.rejects(config.options('/w'), /discovery failed/)
+  assert.equal(held, false)
+  assert.equal(released, 4)
 })
 
 test('selected skill loading returns canonical content and invocation metadata', async () => {

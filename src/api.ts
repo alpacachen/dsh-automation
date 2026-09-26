@@ -6,6 +6,7 @@ import { AutomationDomainError } from './domain.js'
 import { AutomationDeliverySchema, AutomationPermissionPresetSchema, AutomationScheduleSchema, NotificationPolicySchema, type AutomationExecutionTarget, type AutomationTask, type UpdateAutomationRequest } from './types.js'
 
 import '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-client-connection'
 
 const API_ROOT = '/api/automation/v1'
 const MAX_BODY_BYTES = 16 * 1024
@@ -131,6 +132,11 @@ export function registerAutomationApi(ctx: Context, controller: AutomationContro
     kind: 'prefix',
     path: API_ROOT,
     async handler(req, res) {
+      const rejection = ctx.connection.requestRejection(req)
+      if (rejection !== undefined) {
+        send(res, rejection, { error: rejection === 401 ? 'Unauthorized' : 'Forbidden' })
+        return
+      }
       if (!sameOrigin(req)) {
         send(res, 403, { error: 'Cross-origin requests are not allowed.' })
         return

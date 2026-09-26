@@ -1,5 +1,6 @@
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
+import { pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import type { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
@@ -85,8 +86,8 @@ function fakeContext(
     },
     agentPresets: {
       async mount() { order.push('mount') },
-      async resolve(id?: string) { return { id: id ?? 'standard', trust: 'system', path: '/preset' } },
-      async standingKeyFor() { return {} },
+      async resolve(id?: string) { return { id: id ?? 'standard' } },
+      async acquireScope() { return { key: {}, async [Symbol.asyncDispose]() {} } },
       serviceFor() { return undefined },
     },
     permissionPresets: {
@@ -194,6 +195,39 @@ test('fresh runner forwards only explicit reasoning and pinned runs never apply 
   const result = await new DshAutomationRunner(pinned.ctx).run({ ...pinnedTask, execution: { ...pinnedTask.execution, reasoningEffort: 'unsupported' } }, { ...run, sessionId: 'target-session' })
   assert.equal(result.status, 'succeeded')
   assert.deepEqual(restored.agent.options, { provider: 'session-provider', model: 'session-model', reasoningEffort: 'session-high' })
+})
+
+test('fresh and pinned runs use a producer-owned Automation source', async () => {
+  for (const selected of [task, pinnedTask]) {
+    const fake = fakeContext()
+    assert.equal((await new DshAutomationRunner(fake.ctx).run(selected, run)).status, 'succeeded')
+    assert.deepEqual((fake.messages[0] as { source: unknown }).source, { kind: 'plugin:automation' })
+  }
+})
+
+// Optional installed Host codec; no live sessions, scheduler, or model calls.
+const formatModule = process.env.DSH_TEST_V4_FORMAT_MODULE
+test('Automation messages pass real V3/V4 encoding while V4 rejects legacy plugin sources', {
+  skip: formatModule === undefined ? 'Set DSH_TEST_V4_FORMAT_MODULE to an installed v3-to-v4 format package.' : false,
+}, async () => {
+  assert.ok(formatModule)
+  const { releasedV3SessionFormatCodec: v3, releasedV4SessionFormatCodec: v4 } = await import(pathToFileURL(formatModule).href)
+  for (const selected of [task, pinnedTask]) {
+    const fake = fakeContext()
+    await new DshAutomationRunner(fake.ctx).run(selected, run)
+    const message = fake.messages[0]
+    assert.ok(message && typeof message === 'object')
+    const legacy = { ...message, source: { kind: 'plugin', plugin: 'automation' } }
+    for (const type of ['user/message', 'agent/inbox/spliced']) {
+      const event = (input: unknown) => ({
+        type, seq: 1, time: Date.now(),
+        ...(type === 'user/message' ? { surfaceOp: 'append' } : {}),
+        data: type === 'user/message' ? input : { queue: 'nextTurn', start: 0, deleteCount: 0, inserted: [input] },
+      })
+      assert.throws(() => v4.encodeEvent(event(legacy)), /format v4 message requires a producer-owned source kind/)
+      for (const codec of [v3, v4]) assert.doesNotThrow(() => codec.encodeEvent(event(message)))
+    }
+  }
 })
 
 test('runner keeps a completed session live for immediate sidebar visibility', async () => {

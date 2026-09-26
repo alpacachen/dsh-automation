@@ -11,12 +11,19 @@ import { AgentConfiguration } from './agent-configuration.js'
 import { unattendedAgents } from './runtime-marker.js'
 
 import '@deepseek-ai/dsh-agent'
-import '@deepseek-ai/dsh-agent-presets'
+import '@deepseek-ai/dsh-agent-preset-registry'
 import '@deepseek-ai/dsh-permission-presets'
 import '@deepseek-ai/dsh-session-title'
 import '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    // Same identity the Host assigns when migrating our legacy plugin source.
+    'plugin:automation': { kind: 'plugin:automation' }
+  }
+}
 
 const RUN_SUMMARY_MAX_CHARS = 500
 
@@ -93,7 +100,7 @@ export class DshAutomationRunner implements AutomationRunner {
   ): Promise<AutomationRunnerResult> {
     const message = createUserMessage({
       content: [{ type: 'text', text: promptFor(task, run) }],
-      source: { kind: 'plugin', plugin: 'automation' },
+      source: { kind: 'plugin:automation' },
     })
     let turn: number | undefined
     let summary: string | undefined

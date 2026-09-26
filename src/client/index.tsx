@@ -4,7 +4,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only augmentation: renderer declares ctx.slots without adding a require() call to lib/client.js.
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { IconClockOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconClockOutline16 } from './icons.js'
 import { installLocale, t as translate, useLocale } from './i18n.js'
 import { AutomationPanel } from './AutomationPanel.js'
 import {

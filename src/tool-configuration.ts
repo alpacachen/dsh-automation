@@ -10,7 +10,7 @@ import type { AutomationExecutionTarget, AutomationSchedule } from './types.js'
 import type { AgentConfiguration } from './agent-configuration.js'
 import { ACTION_SCHEMA, ERROR_SCHEMA, executeTool, render, workspaceDirectory } from './tool-support.js'
 
-import '@deepseek-ai/dsh-agent-presets'
+import '@deepseek-ai/dsh-agent-preset-registry'
 import '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 

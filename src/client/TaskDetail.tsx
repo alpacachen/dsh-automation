@@ -5,6 +5,9 @@ import {
   Menu,
   StateDot,
   Tooltip,
+  type MenuEntry,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import {
   IconAgentPresetOutline16,
   IconChevronLeftOutline14,
   IconClockOutline16,
@@ -18,8 +21,7 @@ import {
   IconStopFill16,
   IconTrashOutline16,
   IconWarningOutline16,
-  type MenuEntry,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from './icons.js'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { AutomationTaskView } from '../types.js'
 import { t as translate } from './i18n.js'

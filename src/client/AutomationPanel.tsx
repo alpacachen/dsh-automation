@@ -11,17 +11,20 @@ import {
   Input,
   Modal,
   Tooltip,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import {
   IconCloseOutline16,
   IconLoadingOutline16,
   IconPlusOutline16,
   IconRefreshOutline16,
   IconSearchOutline16,
   IconWarningOutline16,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from './icons.js'
 import type { AutomationTaskView } from '../types.js'
 import { useLocale } from './i18n.js'
 import { EmptyState } from './EmptyState.js'
 import { SchedulerHealth } from './SchedulerHealth.js'
+import { selectedSessionId } from './session-selection.js'
 import { TaskRow } from './TaskRow.js'
 import { TaskDetail, type TaskDetailActions } from './TaskDetail.js'
 import { TaskEditor, type TaskUpdateBody } from './TaskEditor.js'
@@ -59,7 +62,7 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
   const { t, locale } = useLocale()
   const { tasks, scheduler, loading, error } = useAutomations()
   const sessions = useSessions((state: SessionListState) => state)
-  const currentSessionId = sessions.current
+  const currentSessionId = selectedSessionId(sessions)
   const refreshSessions = React.useCallback(() => ctx.sessions.refresh(), [ctx])
   const workspaces: WorkspaceSnapshot = useWorkspaces((state: WorkspaceSnapshot) => state)
   const workspaceId = currentSessionId === undefined ? undefined : workspaces.items.find((workspace) =>
@@ -311,7 +314,7 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
       clearError()
       const sessionId = await ctx.uiWorkspace.connectWorkspace(workspaceId)
       queueDraft(sessionId, prompt)
-      ctx.sessions.open(sessionId)
+      ctx.uiWorkspace.openSession(sessionId)
       setPanelOpen(false)
     } catch (reason) {
       reportError(t('newConversationFailed', { error: reason instanceof Error ? reason.message : String(reason) }))
@@ -323,7 +326,7 @@ export function AutomationPanel({ ctx, useSessions, useWorkspaces }: AutomationP
   if (!open) return null
 
   const openSession = (sessionId: SessionId) => {
-    ctx.sessions.open(sessionId)
+    ctx.uiWorkspace.openSession(sessionId)
     setPanelOpen(false)
   }
 
