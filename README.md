@@ -1,3 +1,28 @@
+# Thank you, and goodbye
+
+> **Maintenance status: active maintenance has ended (2026-10-08).**
+>
+> This project will no longer actively develop new features. Compatibility updates for future DSH versions and issue fixes are not promised. The existing code, documentation, and published versions remain available for existing users and reference.
+
+Automation began with a simple idea: let an Agent pick up work at an agreed time, without waiting for us to open a conversation. Scheduling, session continuity, execution records, and message delivery grew out of that idea—and out of the help this project received along the way.
+
+DSH now provides official scheduling capabilities. They are not a complete replacement for this plugin, but for basic scheduling, I would rather pass the baton to the official implementation than keep maintaining a parallel one. **New users should first explore the official Schedule / scheduled-task features available in their DSH version.**
+
+Thank you to everyone who used the plugin, shared feedback, opened issues, contributed code, or helped test it. Its value was not only in the features we built, but in exploring together how Agents could take part in everyday work.
+
+**For existing users:**
+
+- Ending maintenance does not immediately disable existing installations, but future DSH upgrades may break compatibility. Validate your setup before relying on it for critical unattended work.
+- Tasks, permissions, model and skill settings, execution history, and dsh-im delivery settings **do not automatically migrate to the official features**. Those features are not guaranteed to cover these capabilities.
+- Back up task configuration and run data before migrating. Check the official feature set, validate replacement tasks, and then disable old tasks to avoid duplicate runs. Do not uninstall or delete data before backing it up.
+- This change only updates the maintenance notice. It does not archive the repository, deprecate the npm package, delete code, or alter your existing tasks. Forks are welcome under the MIT license.
+
+The original introduction and usage documentation remain below as reference for existing versions, not as a promise of ongoing maintenance.
+
+Thank you for being part of this little project.
+
+---
+
 <p align="center">
   <img src="docs/images/automation-overview-en.png" alt="dsh-automation: natural-language schedules, session continuity, models and skills, permissions, message delivery, and failure protection" width="100%">
 </p>
